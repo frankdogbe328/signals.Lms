@@ -1,4 +1,1 @@
-{
-  "cleanUrls": true,
-  "trailingSlash": false
-}
+{"cleanUrls":true,"trailingSlash":false,"rewrites":[{"source":"/api/:p0/:p1","destination":"/api?p0=:p0&p1=:p1"},{"source":"/api/:p0","destination":"/api?p0=:p0"}]}
