@@ -62,9 +62,10 @@
                     </select>
                 </div>
                 <div class="form-group" id="subjectsGroup" style="display:none;">
-                    <label>Select Courses</label>
-                    <small style="color:var(--text-light,#6b7280);display:block;margin-bottom:10px;">Choose the courses you are enrolled in for your class</small>
+                    <label>Courses You Will Be Enrolled In</label>
+                    <small style="color:var(--text-light,#6b7280);display:block;margin-bottom:10px;">All courses for your class are automatically assigned to you</small>
                     <div id="subjectsContainer" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+                    <input type="hidden" id="autoSubjects" value="">
                 </div>
                 <button type="submit" class="btn">Register</button>
             </form>

@@ -398,7 +398,12 @@ window.confirmSelection = function() {
     
     // Update display
     updateSelectionDisplay(currentSelectionType, selected);
-    
+
+    // When classes change, refresh the subjects list to match those classes
+    if (currentSelectionType === 'classes') {
+        refreshSubjectsList(selected);
+    }
+
     // Close modal
     closeSelectionModal();
 };
@@ -479,36 +484,11 @@ async function loadSubjectsAndClasses() {
         classesContainer.innerHTML = '';
     }
     
-    // Load subjects - get unique subjects from all courses
-    if (courses && courses.length > 0) {
-        const uniqueSubjects = [...new Set(courses.map(c => c.subject))].sort();
-        
-        uniqueSubjects.forEach(subject => {
-            // Add to hidden select
-            if (subjectsSelect) {
-                const option = document.createElement('option');
-                option.value = subject;
-                option.textContent = subject;
-                subjectsSelect.appendChild(option);
-            }
-            
-            // Add to checkbox group (hidden, used for modal)
-            if (subjectsContainer) {
-                const checkboxItem = document.createElement('div');
-                checkboxItem.className = 'checkbox-item';
-                const safeId = subject.replace(/[^a-zA-Z0-9]/g, '_');
-                checkboxItem.innerHTML = `
-                    <input type="checkbox" id="subject_${safeId}" value="${subject}">
-                    <label for="subject_${safeId}">${subject}</label>
-                `;
-                subjectsContainer.appendChild(checkboxItem);
-            }
-        });
-    } else {
-        if (subjectsContainer) {
-            subjectsContainer.innerHTML = '<p style="color: var(--text-light); padding: 15px;">No subjects available. Please contact admin.</p>';
-        }
-    }
+    // Store all courses globally so we can filter by class later
+    window._allLecturerCourses = courses || [];
+
+    // Load subjects — initially show all; filters when classes are selected
+    refreshSubjectsList([]);
     
     // Load classes - sorted alphabetically
     if (classes && classes.length > 0) {
@@ -544,6 +524,58 @@ async function loadSubjectsAndClasses() {
     // Initialize displays
     updateSelectionDisplay('subjects', []);
     updateSelectionDisplay('classes', []);
+}
+
+// Rebuild the subjects list filtered to the given class names.
+// Pass [] to show all subjects (initial state before any class is chosen).
+function refreshSubjectsList(selectedClassNames) {
+    const courses = window._allLecturerCourses || [];
+    const subjectsSelect = document.getElementById('subjects');
+    const subjectsContainer = document.getElementById('subjectsContainer');
+
+    // Get currently checked subjects so we can preserve selections
+    const currentlyChecked = new Set(
+        Array.from(document.querySelectorAll('#subjectsContainer input[type="checkbox"]:checked')).map(cb => cb.value)
+    );
+
+    const filtered = selectedClassNames.length === 0
+        ? courses
+        : courses.filter(c => c && selectedClassNames.includes(c.class));
+
+    const uniqueSubjects = [...new Set(filtered.map(c => c.subject).filter(Boolean))].sort();
+
+    if (subjectsSelect) {
+        subjectsSelect.innerHTML = '<option value="">-- Select Subjects --</option>';
+        uniqueSubjects.forEach(subject => {
+            const opt = document.createElement('option');
+            opt.value = subject;
+            opt.textContent = subject;
+            subjectsSelect.appendChild(opt);
+        });
+    }
+
+    if (subjectsContainer) {
+        if (uniqueSubjects.length === 0) {
+            const msg = selectedClassNames.length > 0
+                ? 'No courses found for the selected class(es). Contact admin to add courses first.'
+                : 'No subjects available. Please contact admin.';
+            subjectsContainer.innerHTML = `<p style="color:var(--text-light);padding:15px;">${msg}</p>`;
+        } else {
+            subjectsContainer.innerHTML = '';
+            uniqueSubjects.forEach(subject => {
+                const item = document.createElement('div');
+                item.className = 'checkbox-item';
+                const safeId = subject.replace(/[^a-zA-Z0-9]/g, '_');
+                const checked = currentlyChecked.has(subject) ? 'checked' : '';
+                item.innerHTML = `<input type="checkbox" id="subject_${safeId}" value="${subject}" ${checked}><label for="subject_${safeId}">${subject}</label>`;
+                subjectsContainer.appendChild(item);
+            });
+        }
+    }
+
+    // Recompute display for subjects based on what's still checked after filter
+    const stillChecked = uniqueSubjects.filter(s => currentlyChecked.has(s));
+    updateSelectionDisplay('subjects', stillChecked);
 }
 
 // Make functions globally accessible for inline event handlers

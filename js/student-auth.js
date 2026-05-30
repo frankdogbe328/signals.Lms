@@ -117,14 +117,11 @@ function setupRegistration() {
                 return;
             }
 
-            const selectedCourses = Array.from(
-                document.querySelectorAll('input[name="subjects"]:checked')
-            ).map(cb => cb.value);
-
-            const coursesAvailable = document.querySelectorAll('input[name="subjects"]').length > 0;
-            if (coursesAvailable && selectedCourses.length === 0) {
-                showAlert('Please select at least one course', 'error');
-                return;
+            // All courses for the class are auto-enrolled — read from hidden input
+            let autoSubjects = [];
+            const hiddenSubjects = document.getElementById('autoSubjects');
+            if (hiddenSubjects && hiddenSubjects.value) {
+                try { autoSubjects = JSON.parse(hiddenSubjects.value); } catch (e) { autoSubjects = []; }
             }
 
             const newStudent = {
@@ -135,7 +132,7 @@ function setupRegistration() {
                 email,
                 password,
                 class: studentClass,
-                subjects: selectedCourses,
+                subjects: autoSubjects,
                 type: 'student'
             };
 
@@ -200,10 +197,12 @@ async function loadClasses() {
 async function loadSubjectsForClass(className) {
     const group = document.getElementById('subjectsGroup');
     const container = document.getElementById('subjectsContainer');
+    const hidden = document.getElementById('autoSubjects');
     if (!group || !container) return;
 
     container.innerHTML = '<span style="color:var(--text-light,#6b7280);font-size:0.9rem;">Loading courses...</span>';
     group.style.display = 'block';
+    if (hidden) hidden.value = '';
 
     try {
         const response = await fetch('/api/courses');
@@ -217,26 +216,26 @@ async function loadSubjectsForClass(className) {
         )].sort();
 
         if (subjects.length === 0) {
-            container.innerHTML = '<span style="color:var(--text-light,#6b7280);font-size:0.9rem;">No courses found for this class</span>';
+            container.innerHTML = '<span style="color:var(--text-light,#6b7280);font-size:0.9rem;">No courses found for this class — contact your admin.</span>';
+            if (hidden) hidden.value = '';
             return;
         }
 
+        // Store all course names in hidden input (auto-enroll all)
+        if (hidden) hidden.value = JSON.stringify(subjects);
+
+        // Display as read-only badges
         container.innerHTML = '';
         subjects.forEach(subject => {
-            const label = document.createElement('label');
-            label.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--border-color,#e5e7eb);border-radius:6px;cursor:pointer;font-size:0.85rem;background:var(--card-bg,#fff);';
-            const cb = document.createElement('input');
-            cb.type = 'checkbox';
-            cb.name = 'subjects';
-            cb.value = subject;
-            cb.style.accentColor = 'var(--primary-color,#2563eb)';
-            label.appendChild(cb);
-            label.appendChild(document.createTextNode(' ' + subject));
-            container.appendChild(label);
+            const badge = document.createElement('span');
+            badge.style.cssText = 'display:inline-block;padding:5px 12px;background:var(--primary-color,#2563eb);color:#fff;border-radius:999px;font-size:0.82rem;';
+            badge.textContent = subject;
+            container.appendChild(badge);
         });
     } catch (err) {
         console.error('loadSubjectsForClass error:', err);
-        container.innerHTML = '<span style="color:#dc2626;font-size:0.9rem;">Could not load subjects</span>';
+        container.innerHTML = '<span style="color:#dc2626;font-size:0.9rem;">Could not load courses</span>';
+        if (hidden) hidden.value = '';
     }
 }
 
