@@ -12,6 +12,8 @@ let examSecurity = {
         pasteAttempts: 0,
         rightClickAttempts: 0,
         focusEvents: 0,
+        blurEvents: 0,
+        devToolsAttempts: 0,
         unauthorizedKeys: [],
         suspiciousPatterns: [],
         responseTimes: [],
@@ -33,8 +35,22 @@ function initializeExamSecurity(exam) {
 // Initialize exam security
 function initExamSecurity(exam, questions) {
     examSecurity.isActive = true;
-    examSecurity.proctoringData.startTime = new Date();
-    examSecurity.proctoringData.lastActivity = new Date();
+    // Reset ALL counters so data from a previous exam doesn't bleed into this report
+    examSecurity.proctoringData = {
+        tabSwitches: 0,
+        copyAttempts: 0,
+        pasteAttempts: 0,
+        rightClickAttempts: 0,
+        focusEvents: 0,
+        blurEvents: 0,
+        devToolsAttempts: 0,
+        unauthorizedKeys: [],
+        suspiciousPatterns: [],
+        responseTimes: [],
+        startTime: new Date(),
+        lastActivity: new Date()
+    };
+    examSecurity.answerPatterns = {};
     
     // Ensure questions is an array
     if (!questions || !Array.isArray(questions)) {
@@ -465,16 +481,20 @@ function preventDrop(e) {
 
 // Tab Switch Detection
 function enableTabSwitchDetection() {
-    // Already handled in visibility change, but add additional checks
+    // visibilitychange (handleVisibilityChange) already handles tab switch and auto-submit.
+    // This interval is a safety net only — it does NOT re-submit or re-increment the counter
+    // to avoid double-counting while the async submitExam() call is in flight.
     setInterval(() => {
         if (examSecurity.isActive && document.hidden) {
-            examSecurity.proctoringData.tabSwitches++;
-            recordSuspiciousActivity('Tab switch detected (interval check)');
-            
-            showSecurityWarning('⛔ Exam Terminated: You navigated away from the exam window!');
-            if (typeof submitExam === 'function') {
-                submitExam();
-                examSecurity.isActive = false;
+            // Only log if visibilitychange didn't already handle it (i.e. tabSwitches still 0)
+            if (examSecurity.proctoringData.tabSwitches === 0) {
+                examSecurity.proctoringData.tabSwitches++;
+                recordSuspiciousActivity('Tab switch detected (fallback interval)');
+                showSecurityWarning('⛔ Exam Terminated: You navigated away from the exam window!');
+                if (typeof submitExam === 'function') {
+                    submitExam();
+                    examSecurity.isActive = false;
+                }
             }
         }
     }, 1000);
@@ -486,21 +506,28 @@ function enableDevToolsBlocking() {
     let devToolsOpen = false;
     const threshold = 160;
     
-    setInterval(() => {
-        if (!examSecurity.isActive) return;
-        
-        if (window.outerHeight - window.innerHeight > threshold ||
-            window.outerWidth - window.innerWidth > threshold) {
-            if (!devToolsOpen) {
-                devToolsOpen = true;
-                examSecurity.proctoringData.devToolsAttempts++;
-                recordSuspiciousActivity('DevTools detected');
-                showSecurityWarning('⚠️ Developer Tools detected! This is not allowed during exams.');
+    // Only run DevTools detection on desktop — on mobile the virtual keyboard shrinks
+    // innerHeight by 200-400px, which would trigger false positives on every keystroke
+    const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+    if (!isMobile) {
+        setInterval(() => {
+            if (!examSecurity.isActive) return;
+
+            // Both dimensions must exceed threshold to reduce false positives
+            const heightDiff = window.outerHeight - window.innerHeight;
+            const widthDiff = window.outerWidth - window.innerWidth;
+            if (heightDiff > threshold && widthDiff > threshold) {
+                if (!devToolsOpen) {
+                    devToolsOpen = true;
+                    examSecurity.proctoringData.devToolsAttempts++;
+                    recordSuspiciousActivity('DevTools detected');
+                    showSecurityWarning('⚠️ Developer Tools detected! This is not allowed during exams.');
+                }
+            } else {
+                devToolsOpen = false;
             }
-        } else {
-            devToolsOpen = false;
-        }
-    }, 500);
+        }, 500);
+    }
     
     // Disable console during exam
     if (examSecurity.isActive) {
@@ -746,72 +773,14 @@ function analyzeResponsePatterns() {
 }
 
 // Plagiarism Checking
+// NOTE: This function requires results to be in localStorage to compare against.
+// Since the system uses Supabase, localStorage is empty at exam time — so this
+// function is intentionally a no-op to avoid producing misleading empty reports.
+// Real cross-student plagiarism detection should be done server-side post-exam.
 function checkPlagiarism(answers) {
-    if (!examSecurity.isActive) return null;
-    
-    // Get all results from other students
-    const results = getData('lms_results');
-    const currentExam = getCurrentExam();
-    if (!currentExam) return null;
-    
-    const examResults = results.filter(r => r.examId === currentExam.id);
-    const plagiarismScore = {
-        similarity: 0,
-        suspiciousAnswers: [],
-        overallRisk: 'low'
-    };
-    
-    examResults.forEach(result => {
-        if (!result.answers || result.answers.length === 0) return;
-        
-        answers.forEach((answer, index) => {
-            if (!answer || answer === '') return;
-            
-            const otherAnswer = result.answers[index];
-            if (!otherAnswer) return;
-            
-            // Simple similarity check (can be enhanced with more sophisticated algorithms)
-            const similarity = calculateSimilarity(String(answer), String(otherAnswer));
-            
-            if (similarity > 0.8) { // 80% similarity threshold
-                plagiarismScore.similarity = Math.max(plagiarismScore.similarity, similarity);
-                plagiarismScore.suspiciousAnswers.push({
-                    questionIndex: index,
-                    similarity: similarity,
-                    otherStudent: result.studentName
-                });
-            }
-        });
-    });
-    
-    // Determine overall risk
-    if (plagiarismScore.similarity > 0.9) {
-        plagiarismScore.overallRisk = 'high';
-    } else if (plagiarismScore.similarity > 0.7) {
-        plagiarismScore.overallRisk = 'medium';
-    }
-    
-    return plagiarismScore;
+    return null;
 }
 
-function calculateSimilarity(str1, str2) {
-    if (!str1 || !str2) return 0;
-    
-    // Normalize strings
-    str1 = str1.toLowerCase().trim();
-    str2 = str2.toLowerCase().trim();
-    
-    if (str1 === str2) return 1.0;
-    
-    // Simple word-based similarity
-    const words1 = str1.split(/\s+/);
-    const words2 = str2.split(/\s+/);
-    
-    const commonWords = words1.filter(w => words2.includes(w));
-    const totalWords = Math.max(words1.length, words2.length);
-    
-    return commonWords.length / totalWords;
-}
 
 // Auto-Submit Timer
 function startAutoSubmitTimer(exam) {
@@ -955,8 +924,9 @@ function disableExamSecurity() {
     
     // Remove event listeners
     document.removeEventListener('visibilitychange', handleVisibilityChange);
-    document.removeEventListener('blur', handleWindowBlur);
-    document.removeEventListener('beforeunload', handleBeforeUnload);
+    window.removeEventListener('blur', handleWindowBlur);
+    window.removeEventListener('pagehide', handlePageHide);
+    window.removeEventListener('beforeunload', handleBeforeUnload);
     document.removeEventListener('contextmenu', preventContextMenu);
     document.removeEventListener('selectstart', preventTextSelection);
     document.removeEventListener('keydown', handleKeyDown);
