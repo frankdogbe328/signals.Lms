@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lecturer Dashboard - Signals School LMS</title>
+    <link rel="icon" type="image/jpeg" href="../logo.jpeg">
+    <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+    <div id="background-carousel" data-img-path="../"></div>
+    <div class="container">
+        <div class="dashboard">
+            <div class="dashboard-header">
+                <div class="dashboard-logo-title">
+                    <img src="../logo.jpeg" alt="Signals Training School Logo" class="dashboard-logo">
+                    <h2>Lecturer Dashboard</h2>
+                </div>
+                <div class="user-info">
+                    <button id="theme-toggle-btn" class="theme-toggle-btn" onclick="toggleTheme()" title="Toggle Dark Mode">☀️</button>
+                    <span id="lecturerName"></span>
+                    <button class="logout-btn" onclick="logout()">Logout</button>
+                </div>
+            </div>
+
+            <div class="nav-tabs">
+                <button class="tab-btn active" onclick="showSection('exams', event)">My Exams & Quizzes</button>
+                <button class="tab-btn" onclick="showSection('create-exam', event)">Create Exam/Quiz</button>
+                <button class="tab-btn" onclick="showSection('announcements', event)">Announcements</button>
+                <!--<button class="tab-btn" onclick="showSection('analytics', event)">Analytics</button>-->
+                <button class="tab-btn" onclick="showSection('materials', event)">Course Materials</button>
+                <button class="tab-btn" onclick="showSection('upload-material', event)">Upload Material</button>
+                <button class="tab-btn" onclick="showSection('assignments', event)">Manage Assignments</button>
+                <button class="tab-btn" onclick="showSection('give-assignment', event)">Give Assignment</button>
+                <!--<button class="tab-btn" onclick="showSection('results', event)">View Results</button>-->
+                <!--<button class="tab-btn" onclick="showSection('written-marks', event)">Enter Written Marks</button>-->
+                <!--<button class="tab-btn" onclick="showSection('student-registrations', event)">Student Registrations</button>-->
+            </div>
+
+            <div id="student-registrations-section" class="tab-section">
+                <div style="background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); color: white; padding: 20px; border-radius: 12px; margin-bottom: 25px;">
+                    <h3 style="margin: 0; font-size: 1.6rem;">Student Subject Registrations</h3>
+                    <p style="margin: 5px 0 0 0; opacity: 0.9;">View subjects registered by students in your classes.</p>
+                </div>
+                <div class="card">
+                    <div class="table-container">
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <thead>
+                                <tr style="background: var(--primary-color); color: white;">
+                                    <th style="padding: 12px; text-align: left;">Student Name</th>
+                                    <th style="padding: 12px; text-align: left;">Class</th>
+                                    <th style="padding: 12px; text-align: left;">Registered Subjects</th>
+                                    <th style="padding: 12px; text-align: left;">Last Updated</th>
+                                </tr>
+                            </thead>
+                            <tbody id="student-registrations-tbody">
+                                <tr><td colspan="4" style="text-align: center; padding: 20px;">Loading registrations...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            
+            <div id="written-marks-section" class="tab-section">
+                <div style="background: linear-gradient(135deg, var(--primary-color), #2c3e50); color: white; padding: 25px; border-radius: 12px; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+                    <h3 style="margin: 0; font-size: 1.6rem;">Enter Written Exam Marks</h3>
+                    <p style="margin: 5px 0 0 0; opacity: 0.9;">Directly enter marks for students in your classes for written assessments.</p>
+                </div>
+                
+                <div class="card" style="padding: 25px;">
+                    <div id="alert-container-written-marks"></div>
+                    
+                    <!-- Step 1: Select Class -->
+                    <div id="written-marks-step1" style="margin-bottom: 30px;">
+                        <h4 style="margin-bottom: 15px; border-bottom: 2px solid var(--border-color); padding-bottom: 8px;">Step 1: Select Class</h4>
+                        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                            <select id="written-marks-class-select" onchange="loadWrittenExamTypes()" style="max-width: 400px; padding: 12px; font-size: 1rem; border: 2px solid var(--border-color); border-radius: 8px;">
+                                <option value="">-- Select Class --</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- Step 2: Select Exam Type -->
+                    <div id="written-marks-step2" style="display: none; margin-bottom: 30px;">
+                        <h4 style="margin-bottom: 15px; border-bottom: 2px solid var(--border-color); padding-bottom: 8px;">Step 2: Select Type of Exam</h4>
+                        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                            <select id="written-marks-exam-type-select" onchange="loadWrittenMarksForType()" style="max-width: 400px; padding: 12px; font-size: 1rem; border: 2px solid var(--border-color); border-radius: 8px;">
+                                <option value="">-- Select Exam Type --</option>
+                                <option value="opening">Opening (5%)</option>
+                                <option value="bft1">BFT 1 (2.5%)</option>
+                                <option value="bft2">BFT 2 (2.5%)</option>
+                                <option value="mid-course">Mid Course Exam (20%)</option>
+                                <option value="general-assessment">General Assessment (5%)</option>
+                                <option value="final-exam">Final Exam (25%)</option>
+                            </select>
+                            <button class="btn btn-secondary" onclick="resetWrittenMarksSelection()">Change Class</button>
+                        </div>
+                        <p style="margin-top: 15px; color: var(--text-light); font-size: 1rem; background: #f8f9fa; padding: 10px; border-radius: 6px;">
+                            <strong>Note:</strong> These are general assessment marks for the specified course level.
+                        </p>
+                    </div>
+                    
+                    <!-- Marks Entry Container -->
+                    <div id="written-marks-container" style="display: none;"></div>
+                </div>
+            </div>
+            </div>
+
+            <div id="exams-section" class="tab-section active">
+                <h3>My Exams & Quizzes</h3>
+                <div id="exams-list"></div>
+            </div>
+
+            <div id="create-exam-section" class="tab-section">
+                <h3 id="examFormTitle">Create New Exam or Quiz</h3>
+                <div id="alert-container"></div>
+                <form id="examForm" class="form-container" style="max-width: 800px; margin: 0;">
+                    <input type="hidden" id="examId" name="examId">
+                    <div class="form-group">
+                        <label for="examTitle">Exam/Quiz Title</label>
+                        <input type="text" id="examTitle" name="examTitle" required>
+                    </div>
+                    <div class="form-group" style="display: none;">
+                        <label for="examType">Type</label>
+                        <select id="examType" name="examType" required>
+                            <option value="Opening">Opening (5%) - Online Quiz</option>
+                            <option value="BFT">BFT (5%) - Online Quiz</option>
+                            <option value="Made Course Exercise">Made Course Exercise (15%) - Online Quiz</option>
+                            <option value="Mid Course Exam">Mid Course Exam (20%) - Online Quiz</option>
+                            <option value="General Assessment">General Assessment (5%) - Online Quiz</option>
+                            <option value="Final Course Exercise">Final Course Exercise (20%) - Online Quiz</option>
+                            <option value="Final Exam">Final Exam (25%) - Online Quiz</option>
+                            <option value="Quiz">General Quiz</option>
+                        </select>
+                        <small style="color: var(--text-light);">Note: Written exams (Opening, BFT, Mid Course Exam, General Assessment, Final Exam) marks are entered by Admin. Online quizzes are created here.</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="examSubject">Subject</label>
+                        <select id="examSubject" name="examSubject" required>
+                            <option value="">-- Select Subject --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="examClasses">Classes <span class="mobile-hint">(Tap to select multiple)</span></label>
+                        <div id="examClassesContainer" class="checkbox-group"></div>
+                        <select id="examClasses" name="examClasses" multiple style="display: none;">
+                            <option value="">-- Select Classes --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="examDate">Start Date & Time</label>
+                        <input type="datetime-local" id="examDate" name="examDate" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="examDuration">Duration (minutes)</label>
+                        <input type="number" id="examDuration" name="examDuration" min="1" required>
+                    </div>
+                    <div id="questions-container">
+                        <h4>Add Questions</h4>
+                        <div class="question-input-tabs" style="margin-bottom: 20px;">
+                            <button type="button" class="tab-btn active" onclick="showQuestionInput('manual')">Manual Entry</button>
+                            <button type="button" class="tab-btn" onclick="showQuestionInput('excel')">Import from Excel/CSV</button>
+                            <button type="button" class="tab-btn" onclick="showQuestionInput('word')">Import from Word</button>
+                        </div>
+                        
+                        <!-- Manual Entry -->
+                        <div id="manual-input" class="question-input-section active">
+                            <div style="margin-bottom: 15px;">
+                                <label>
+                                    <input type="radio" name="questionTypeDefault" value="multiple-choice" checked onchange="setDefaultQuestionType('multiple-choice')">
+                                    Multiple Choice
+                                </label>
+                                <!--<label style="margin-left: 20px;">
+                                    <input type="radio" name="questionTypeDefault" value="essay" onchange="setDefaultQuestionType('essay')">
+                                    Essay/Long Answer
+                                </label>-->
+                            </div>
+                            <div id="questions-list"></div>
+                            <button type="button" class="btn btn-secondary" onclick="addQuestion()">Add Question</button>
+                        </div>
+                        
+                        <!-- Excel/CSV Import -->
+                        <div id="excel-input" class="question-input-section">
+                            <div class="alert alert-info">
+                                <strong>Excel/CSV Format:</strong><br>
+                                Create a CSV or Excel file with columns: Question, Option1, Option2, Option3, Option4, CorrectAnswer<br>
+                                CorrectAnswer should be 1, 2, 3, or 4 (corresponding to Option1-4)<br>
+                                <a href="#" onclick="downloadQuestionTemplate('csv'); return false;" style="color: var(--primary-color);">Download CSV Template</a>
+                            </div>
+                            <div class="form-group">
+                                <label for="excelFile">Upload Excel/CSV File</label>
+                                <input type="file" id="excelFile" accept=".xlsx,.xls,.csv" onchange="handleExcelUpload(event)">
+                                <small style="color: var(--text-light);">Supported formats: .xlsx, .xls, .csv</small>
+                            </div>
+                            <div id="excel-preview" style="margin-top: 15px;"></div>
+                        </div>
+                        
+                        <!-- Word Import -->
+                        <div id="word-input" class="question-input-section">
+                            <div class="alert alert-warning" style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin-bottom: 15px;">
+                                <strong>⚠️ IMPORTANT: Save as Word Document</strong><br><br>
+                                <strong>Steps to upload Word questions:</strong><br>
+                                1. Create your questions in Microsoft Word<br>
+                                2. Format them as shown below<br>
+                                3. <strong>File → Save</strong><br>
+                                4. Upload the file<br><br>
+                                <strong>Question Format:</strong><br>
+                                1. Question text?<br>
+                                &nbsp;&nbsp;&nbsp;a) Option 1<br>
+                                &nbsp;&nbsp;&nbsp;b) Option 2<br>
+                                &nbsp;&nbsp;&nbsp;c) Option 3<br>
+                                &nbsp;&nbsp;&nbsp;d) Option 4<br>
+                                Answer: a<br><br>
+                                Repeat for each question.
+                            </div>
+                            <div class="form-group">
+                                <label for="wordFile">Upload Word Document</label>
+                                <input type="file" id="wordFile" accept=".txt,.doc,.docx" onchange="handleWordUpload(event)">
+                                <small style="color: var(--text-light);">
+                                    <strong>Important:</strong> Save your Word document as <strong>word file</strong> format before uploading.<br>
+                                    Supported formats: word file (recommended), .doc, .docx
+                                </small>
+                            </div>
+                            <div id="word-preview" style="margin-top: 15px;"></div>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 20px;">
+                        <button type="submit" class="btn" id="examSubmitBtn">Create Exam</button>
+                        <button type="button" class="btn btn-secondary" id="examCancelBtn" onclick="cancelExamEdit()" style="display: none;">Cancel</button>
+                    </div>
+                </form>
+            </div>
+
+            <div id="materials-section" class="tab-section">
+                <h3>My Uploaded Materials</h3>
+                <div id="materials-list"></div>
+            </div>
+
+            <div id="upload-material-section" class="tab-section">
+                <h3>Upload Course Material</h3>
+                <div id="alert-container-upload"></div>
+                <form id="materialForm" class="form-container" style="max-width: 800px; margin: 0;">
+                    <div class="form-group">
+                        <label for="materialTitle">Material Title</label>
+                        <input type="text" id="materialTitle" name="materialTitle" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="materialSubject">Subject</label>
+                        <select id="materialSubject" name="materialSubject" required>
+                            <option value="">-- Select Subject --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="materialClass">Class</label>
+                        <select id="materialClass" name="materialClass" required>
+                            <option value="">-- Select Class --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="materialDescription">Description</label>
+                        <textarea id="materialDescription" name="materialDescription"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="materialFile">Upload File <span style="color: var(--text-light); font-weight: normal;">(PDF, Word, PowerPoint, etc.)</span></label>
+                        <input type="file" id="materialFile" name="materialFile" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.jpg,.jpeg,.png,.gif" onchange="handleFileSelect(event)">
+                        <small style="color: var(--text-light); display: block; margin-top: 5px;">
+                            Supported formats: PDF, Word (.doc, .docx), PowerPoint (.ppt, .pptx), Excel (.xls, .xlsx), Images, Text files
+                        </small>
+                        <div id="file-info" style="margin-top: 10px; padding: 10px; background: var(--light-color); border-radius: 6px; display: none;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div>
+                                    <strong id="file-name"></strong>
+                                    <div style="font-size: 1rem; color: var(--text-light); margin-top: 5px;" id="file-size"></div>
+                                </div>
+                                <button type="button" class="btn btn-danger btn-small" onclick="clearFileSelection()" style="margin-left: 10px;">Remove</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="materialContent">Content (HTML supported) <span style="color: var(--text-light); font-weight: normal;">(optional if file is uploaded)</span></label>
+                        <textarea id="materialContent" name="materialContent" rows="10"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="materialFileUrl">File URL (optional - for external downloadable files)</label>
+                        <input type="url" id="materialFileUrl" name="materialFileUrl" placeholder="https://example.com/file.pdf">
+                        <small style="color: var(--text-light);">Use this if the file is hosted externally</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="materialVideoUrl">Video URL (optional - YouTube, Vimeo, etc.)</label>
+                        <input type="url" id="materialVideoUrl" name="materialVideoUrl" placeholder="https://www.youtube.com/watch?v=...">
+                        <small style="color: var(--text-light);">Supports YouTube, Vimeo, and direct video URLs</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="materialAudioUrl">Audio URL (optional)</label>
+                        <input type="url" id="materialAudioUrl" name="materialAudioUrl" placeholder="https://example.com/audio.mp3">
+                        <small style="color: var(--text-light);">Direct link to audio file (MP3, WAV, etc.)</small>
+                    </div>
+                    <button type="submit" class="btn">Upload Material</button>
+                </form>
+            </div>
+
+            <div id="assignments-section" class="tab-section">
+                <h3>Manage Assignments</h3>
+                <div id="assignments-list"></div>
+            </div>
+
+            <div id="give-assignment-section" class="tab-section">
+                <h3>Give New Assignment</h3>
+                <div id="alert-container-assignment"></div>
+                <form id="assignmentForm" class="form-container" style="max-width: 800px; margin: 0;">
+                    <div class="form-group">
+                        <label for="assignmentTitle">Assignment Title</label>
+                        <input type="text" id="assignmentTitle" name="assignmentTitle" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="assignmentSubject">Subject</label>
+                        <select id="assignmentSubject" name="assignmentSubject" required>
+                            <option value="">-- Select Subject --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="assignmentClasses">Target Classes (Select multiple)</label>
+                        <div id="assignmentClassesContainer" class="checkbox-group"></div>
+                    </div>
+                    <div class="form-group">
+                        <label for="assignmentDeadline">Deadline (Date & Time)</label>
+                        <input type="datetime-local" id="assignmentDeadline" name="assignmentDeadline" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="assignmentDescription">Description / Instructions</label>
+                        <textarea id="assignmentDescription" name="assignmentDescription" rows="6" required></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="assignmentFile">Attach File (Optional, MUST BE IN WORD DOC)</label>
+                        <input type="file" id="assignmentFile" onchange="handleAssignmentFileSelect(event)">
+                        <div id="assignment-file-info" style="margin-top: 10px; display: none;">
+                            <span id="assignment-file-name" style="font-weight: bold;"></span>
+                            <button type="button" class="btn btn-danger btn-small" onclick="clearAssignmentFile()">Remove</button>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn">Create & Send Assignment</button>
+                </form>
+            </div>
+
+            <div id="announcements-section" class="tab-section">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; flex-wrap: wrap; gap: 15px;">
+                    <h3 style="margin: 0;">Announcements</h3>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button class="btn btn-primary" onclick="showBulkAnnouncement()">Bulk Announcement</button>
+                    <!--<button class="btn btn-success" onclick="showCreateAnnouncement()">
+                        <span style="font-size: 1.2rem; margin-right: 5px;">+</span> Create Announcement
+                    </button>-->
+                    </div>
+                </div>
+                <div id="announcements-list" style="min-height: 200px;"></div>
+                
+                <!-- Create Announcement Modal -->
+                <div id="announcementModal" class="modal" style="display: none;">
+                    <div class="modal-content" style="max-width: 700px; padding: 30px;">
+                        <button class="modal-close" onclick="closeAnnouncementModal()" style="top: 15px; right: 15px;">×</button>
+                        <h3 style="margin-bottom: 25px; color: var(--primary-color);">Create New Announcement</h3>
+                        <form id="announcementForm" style="display: flex; flex-direction: column; gap: 20px;">
+                            <div class="form-group">
+                                <label for="announcementTitle" style="font-weight: 600; margin-bottom: 8px; display: block;">Title <span style="color: red;">*</span></label>
+                                <input type="text" id="announcementTitle" required placeholder="Enter announcement title" style="width: 100%; padding: 12px 15px; border: 2px solid var(--border-color); border-radius: 8px; font-size: 1rem;">
+                            </div>
+                            <div class="form-group">
+                                <label for="announcementMessage" style="font-weight: 600; margin-bottom: 8px; display: block;">Message <span style="color: red;">*</span></label>
+                                <textarea id="announcementMessage" rows="8" required placeholder="Enter your announcement message..." style="width: 100%; padding: 12px 15px; border: 2px solid var(--border-color); border-radius: 8px; font-size: 1rem; resize: vertical; min-height: 150px;"></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label for="announcementTarget" style="font-weight: 600; margin-bottom: 8px; display: block;">Target Audience <span style="color: red;">*</span></label>
+                                <select id="announcementTarget" style="width: 100%; padding: 12px 15px; border: 2px solid var(--border-color); border-radius: 8px; font-size: 1rem;">
+                                    <option value="class">Specific Classes</option>
+                                    <option value="all">All Users</option>
+                                    <option value="students">All Students</option>
+                                    <option value="lecturers">All Lecturers</option>
+                                </select>
+                            </div>
+                            <div class="form-group" id="announcementClassesGroup">
+                                <label style="font-weight: 600; margin-bottom: 8px; display: block;">Target Classes</label>
+                                <div id="announcementClassesContainer" class="checkbox-group" style="background: var(--light-color); padding: 15px; border-radius: 8px; border: 2px solid var(--border-color); max-height: 200px; overflow-y: auto;"></div>
+                                <small style="color: var(--text-light); margin-top: 5px; display: block;">Select at least one class if "Specific Classes" is selected</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="announcementPriority" style="font-weight: 600; margin-bottom: 8px; display: block;">Priority</label>
+                                <select id="announcementPriority" style="width: 100%; padding: 12px 15px; border: 2px solid var(--border-color); border-radius: 8px; font-size: 1rem;">
+                                    <option value="normal">Normal</option>
+                                    <option value="high">High</option>
+                                    <option value="urgent">Urgent</option>
+                                </select>
+                            </div>
+                            <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px;">
+                                <button type="button" class="btn btn-secondary" onclick="closeAnnouncementModal()">Cancel</button>
+                                <button type="submit" class="btn btn-success">Post Announcement</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+                
+                <!-- Bulk Announcement Modal -->
+                <div id="bulkAnnouncementModal" class="modal" style="display: none;">
+                    <div class="modal-content" style="max-width: 700px; padding: 30px;">
+                        <button class="modal-close" onclick="closeBulkAnnouncementModal()" style="top: 15px; right: 15px;">×</button>
+                        <h3 style="margin-bottom: 25px; color: var(--primary-color);">Bulk Announcement</h3>
+                        <form id="bulkAnnouncementForm" style="display: flex; flex-direction: column; gap: 20px;">
+                            <div class="form-group">
+                                <label for="bulkAnnouncementTitle" style="font-weight: 600; margin-bottom: 8px; display: block;">Title <span style="color: red;">*</span></label>
+                                <input type="text" id="bulkAnnouncementTitle" required placeholder="Enter announcement title" style="width: 100%; padding: 12px 15px; border: 2px solid var(--border-color); border-radius: 8px; font-size: 1rem;">
+                            </div>
+                            <div class="form-group">
+                                <label for="bulkAnnouncementMessage" style="font-weight: 600; margin-bottom: 8px; display: block;">Message <span style="color: red;">*</span></label>
+                                <textarea id="bulkAnnouncementMessage" rows="8" required placeholder="Enter your announcement message..." style="width: 100%; padding: 12px 15px; border: 2px solid var(--border-color); border-radius: 8px; font-size: 1rem; resize: vertical; min-height: 150px;"></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label style="font-weight: 600; margin-bottom: 8px; display: block;">Target All Classes</label>
+                                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                                    <input type="checkbox" id="bulkAllClasses" onchange="toggleBulkClasses()" style="width: 20px; height: 20px;">
+                                    <label for="bulkAllClasses" style="margin: 0;">Select all classes</label>
+                                </div>
+                                <div id="bulkAnnouncementClassesContainer" class="checkbox-group" style="background: var(--light-color); padding: 15px; border-radius: 8px; border: 2px solid var(--border-color); max-height: 200px; overflow-y: auto;"></div>
+                                <small style="color: var(--text-light); margin-top: 5px; display: block;">Select at least one class</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="bulkAnnouncementPriority" style="font-weight: 600; margin-bottom: 8px; display: block;">Priority</label>
+                                <select id="bulkAnnouncementPriority" style="width: 100%; padding: 12px 15px; border: 2px solid var(--border-color); border-radius: 8px; font-size: 1rem;">
+                                    <option value="normal">Normal</option>
+                                    <option value="high">High</option>
+                                    <option value="urgent">Urgent</option>
+                                </select>
+                            </div>
+                            <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px;">
+                                <button type="button" class="btn btn-secondary" onclick="closeBulkAnnouncementModal()">Cancel</button>
+                                <button type="submit" class="btn btn-success">Post to All Selected Classes</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <div id="analytics-section" class="tab-section">
+                <h3>Analytics Dashboard</h3>
+                <div id="analytics-content"></div>
+            </div>
+
+            <div id="results-section" class="tab-section">
+                <h3>Student Results</h3>
+                <!-- <div style="margin-bottom: 15px;">
+                    <select id="bulkExamSelect" onchange="loadBulkGrading()" style="margin-right: 10px;">
+                        <option value="">-- Select Exam for Bulk Grading --</option>
+                    </select>
+                    <button class="btn btn-secondary" onclick="enableBulkGrading()" id="bulkGradingBtn">Enable Bulk Grading</button>
+                </div> -->
+                <div class="table-container">
+                    <table id="results-table">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="selectAllResults" onchange="toggleAllResults()"></th>
+                                <th>Student Name</th>
+                                <th>Exam/Quiz</th>
+                                <th>Subject</th>
+                                <!-- <th>Type</th> -->
+                                <th>Score & Grade</th>
+                                <th>Submitted</th>
+                            </tr>
+                        </thead>
+                        <tbody id="results-tbody">
+                        </tbody>
+                    </table>
+                </div>
+                <div id="bulkGradingActions" style="display: none; margin-top: 15px;">
+                    <button class="btn btn-success" onclick="bulkGradeSelected()">Grade Selected</button>
+                    <button class="btn btn-primary" onclick="exportSelectedResults()">Export Selected to CSV</button>
+                    <button class="btn btn-secondary" onclick="exportAllResults()">Export All Results to CSV</button>
+                    <span id="selectedCount" style="margin-left: 15px;"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="../js/app.js"></script>
+    <script src="../js/theme-toggle.js"></script>
+    <script src="../js/notifications.js"></script>
+    <!-- Define showSection early to ensure it's available for onclick handlers -->
+    <script>
+        window.showSection = function(section, evt) {
+            // Clear specific filters when navigating via tabs
+            if (evt) {
+                window.currentResultFilterExamId = null;
+            }
+
+            // Hide all sections
+            document.querySelectorAll('.tab-section').forEach(sec => {
+                sec.classList.remove('active');
+            });
+            
+            // Remove active class from all buttons
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Show selected section
+            const targetSection = document.getElementById(section + '-section');
+            if (targetSection) {
+                targetSection.classList.add('active');
+            }
+            
+            // Add active class to clicked button
+            const clickedBtn = (evt && evt.target) ? evt.target : 
+                              document.querySelector(`.tab-btn[onclick*="showSection('${section}')"]`);
+            if (clickedBtn) {
+                clickedBtn.classList.add('active');
+            }
+            
+            // Load section-specific data (functions will be available after lecturer-dashboard.js loads)
+            if (section === 'announcements' && typeof loadAnnouncements === 'function') {
+                setTimeout(() => loadAnnouncements(), 100);
+            }
+            if (section === 'analytics' && typeof loadAnalytics === 'function') {
+                setTimeout(() => loadAnalytics(), 100);
+            }
+            if (section === 'materials' && typeof loadMaterials === 'function') {
+                setTimeout(() => loadMaterials(), 100);
+            }
+            if (section === 'results' && typeof loadResults === 'function') {
+                setTimeout(() => loadResults(), 100);
+            }
+            if (section === 'student-registrations' && typeof loadStudentRegistrations === 'function') {
+                setTimeout(() => loadStudentRegistrations(), 100);
+            }
+            if (section === 'exams' && typeof loadExams === 'function') {
+                setTimeout(() => loadExams(), 100);
+            }
+            if (section === 'written-marks' && typeof loadWrittenMarksSection === 'function') {
+                setTimeout(() => loadWrittenMarksSection(), 100);
+            }
+            if (section === 'assignments' && typeof loadAssignments === 'function') {
+                setTimeout(() => loadAssignments(), 100);
+            }
+            if (section === 'give-assignment' && typeof setupAssignmentForm === 'function') {
+                setTimeout(() => setupAssignmentForm(), 100);
+            }
+        };
+    </script>
+    <!-- Material View Modal -->
+    <div id="materialModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 900px; padding: 0; overflow: hidden; height: 80vh; display: flex; flex-direction: column;">
+            <div class="modal-header" style="background: var(--primary-color); color: white; padding: 20px; position: relative;">
+                <h3 id="modalMaterialTitle" style="margin: 0; padding-right: 40px;">Material Title</h3>
+                <button class="modal-close" onclick="closeMaterialModal()" style="color: white; font-size: 2rem; border: none; background: none; cursor: pointer; position: absolute; top: 15px; right: 20px;">&times;</button>
+            </div>
+            <div id="modalMaterialInfo" style="padding: 15px 25px; border-bottom: 1px solid rgba(0,0,0,0.1); background: var(--light-color); font-size: 1rem;">
+                <span id="modalMaterialSubject"></span> | <span id="modalMaterialClass"></span> | <span id="modalMaterialDate"></span>
+            </div>
+            <div id="modalMaterialContent" style="padding: 25px; overflow-y: auto; flex: 1; line-height: 1.6;">
+                <!-- Content will be injected here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Chatbot -->
+    <div id="chatbot-container">
+        <div id="chatbot-button" onclick="toggleChatbot()" title="Open Chat Assistant">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+            </svg>
+        </div>
+        <div id="chatbot-window">
+            <div class="chatbot-header">
+                <div class="chatbot-header-info">
+                    <div class="chatbot-avatar">🤖</div>
+                    <div>
+                        <h4>Frank</h4>
+                        <span class="chatbot-status">Online • Knowledge is power</span>
+                    </div>
+                </div>
+                <div class="chatbot-header-actions">
+                    <button onclick="clearChatbot()" title="Clear Chat" class="chatbot-icon-btn">🗑️</button>
+                    <button onclick="closeChatbot()" title="Close" class="chatbot-icon-btn">×</button>
+                </div>
+            </div>
+            <div id="chatbot-messages"></div>
+            <form id="chatbot-form" class="chatbot-input-area">
+                <textarea id="chatbot-input" placeholder="Type your message..." rows="1"></textarea>
+                <button type="submit" class="chatbot-send-btn" title="Send">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script src="../js/api-service.js?v=3"></script>
+    <!-- Mammoth.js for .docx file support -->
+    <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js" defer></script>
+    <script src="../js/lecturer-dashboard.js?v=3" defer></script>
+    <script src="../js/question-import.js" defer></script>
+    <script src="../js/lecturer-announcements.js" defer></script>
+    <script src="../js/lecturer-analytics.js" defer></script>
+    <script src="../js/lecturer-bulk-grading.js" defer></script>
+    <script src="../js/performance-analytics.js" defer></script>
+    <script src="../js/admin-written-marks.js" defer></script>
+    <script src="../js/chatbot-data-access.js" defer></script>
+    <script src="../js/chatbot-api.js" defer></script>
+    <script src="../js/chatbot-config.js" defer></script>
+    <script src="../js/chatbot.js" defer></script>
+
+    <!-- Chatbot -->
+    <div id="chatbot-container">
+        <div id="chatbot-button" onclick="toggleChatbot()" title="Open Chat Assistant">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+            </svg>
+        </div>
+        <div id="chatbot-window">
+            <div class="chatbot-header">
+                <div class="chatbot-header-info">
+                    <div class="chatbot-avatar">🤖</div>
+                    <div>
+                        <h4>Frank</h4>
+                        <span class="chatbot-status">Online • Knowledge is power</span>
+                    </div>
+                </div>
+                <div class="chatbot-header-actions">
+                    <button onclick="clearChatbot()" title="Clear Chat" class="chatbot-icon-btn">🗑️</button>
+                    <button onclick="closeChatbot()" title="Close" class="chatbot-icon-btn">×</button>
+                </div>
+            </div>
+            <div id="chatbot-messages"></div>
+            <form id="chatbot-form" class="chatbot-input-area">
+                <textarea id="chatbot-input" placeholder="Type your message..." rows="1"></textarea>
+                <button type="submit" class="chatbot-send-btn" title="Send">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+            </form>
+        </div>
+    </div>
+    <!-- Assignment Submissions Modal -->
+    <div id="submissionsModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 900px; padding: 0; height: 85vh; display: flex; flex-direction: column;">
+            <div class="modal-header" style="background: var(--primary-color); color: white; padding: 20px; position: relative; border-radius: 12px 12px 0 0;">
+                <h3 id="submissionsModalTitle" style="margin: 0;">Assignment Submissions</h3>
+                <button class="modal-close" onclick="closeSubmissionsModal()" style="color: white; font-size: 2rem; border: none; background: none; cursor: pointer; position: absolute; top: 15px; right: 20px;">&times;</button>
+            </div>
+            <div id="submissions-list-container" style="padding: 25px; overflow-y: auto; flex: 1;">
+                <div id="submissions-table-wrapper">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="background: var(--light-color); text-align: left;">
+                                <th style="padding: 12px; border-bottom: 2px solid var(--border-color);">Student</th>
+                                <th style="padding: 12px; border-bottom: 2px solid var(--border-color);">Submitted At</th>
+                                <th style="padding: 12px; border-bottom: 2px solid var(--border-color);">Status</th>
+                                <th style="padding: 12px; border-bottom: 2px solid var(--border-color);">Grade</th>
+                                <th style="padding: 12px; border-bottom: 2px solid var(--border-color);">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="submissions-tbody">
+                            <!-- Injected by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Grading Modal -->
+    <div id="gradingModal" class="modal" style="display: none; z-index: 10001;">
+        <div class="modal-content" style="max-width: 600px; padding: 30px;">
+            <button class="modal-close" onclick="closeGradingModal()" style="top: 15px; right: 15px;">×</button>
+            <h3 id="gradingStudentName" style="margin-bottom: 20px; color: var(--primary-color);">Grade Submission</h3>
+            <div id="studentWorkPreview" style="background: var(--light-color); padding: 15px; border-radius: 8px; margin-bottom: 20px; max-height: 200px; overflow-y: auto;">
+                <!-- Student work preview -->
+            </div>
+            <form id="gradingForm">
+                <input type="hidden" id="gradingSubmissionId">
+                <div class="form-group">
+                    <label for="gradeScore">Score (0-100)</label>
+                    <input type="number" id="gradeScore" min="0" max="100" required style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color);">
+                </div>
+                <div class="form-group">
+                    <label for="gradeFeedback">Feedback (Optional)</label>
+                    <textarea id="gradeFeedback" rows="4" placeholder="Enter feedback for the student..." style="width: 100%; border-radius: 8px; padding: 10px; border: 1px solid var(--border-color);"></textarea>
+                </div>
+                <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                    <button type="button" class="btn btn-secondary" onclick="closeGradingModal()">Cancel</button>
+                    <button type="submit" class="btn btn-success">Save Grade</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <script src="../js/carousel.js"></script>
+</body>
+</html>

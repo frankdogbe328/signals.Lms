@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - Signals School LMS</title>
+    <link rel="icon" type="image/jpeg" href="../logo.jpeg">
+    <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+    <div id="background-carousel" data-img-path="../"></div>
+    <div class="container">
+        <div class="dashboard">
+            <div class="dashboard-header">
+                <div class="dashboard-logo-title">
+                    <img src="../logo.jpeg" alt="Signals Training School Logo" class="dashboard-logo">
+                    <h2>Admin Dashboard</h2>
+                </div>
+                <div class="user-info">
+                    <span>System Administrator</span>
+                    <button class="logout-btn" onclick="logout()">Logout</button>
+                </div>
+            </div>
+
+            <div class="cards-grid">
+                <div class="card">
+                    <h3>Total Students</h3>
+                    <p id="totalStudents">0</p>
+                </div>
+                <div class="card">
+                    <h3>Total Lecturers</h3>
+                    <p id="totalLecturers">0</p>
+                </div>
+                <div class="card">
+                    <h3>Total Classes</h3>
+                    <p id="totalClasses">0</p>
+                </div>
+                <div class="card">
+                    <h3>Total Courses</h3>
+                    <p id="totalCourses">0</p>
+                </div>
+                <div class="card">
+                    <h3>Total Exams</h3>
+                    <p id="totalExams">0</p>
+                </div>
+                <div class="card">
+                    <h3>Total Results</h3>
+                    <p id="totalResults">0</p>
+                </div>
+            </div>
+
+            <div class="nav-tabs">
+                <button class="tab-btn active" onclick="showSection('classes')">Manage Classes</button>
+                <button class="tab-btn" onclick="showSection('courses')">Manage Courses</button>
+                <button class="tab-btn" onclick="showSection('users')">Manage Users</button>
+                <button class="tab-btn" onclick="showSection('password-reset')">Reset Passwords</button>
+                <button class="tab-btn" onclick="showSection('exams')">Manage Exams</button>
+                <button class="tab-btn" onclick="showSection('written-marks')">Enter Written Exam Marks</button>
+                <button class="tab-btn" onclick="showSection('results')">Manage Results</button>
+                <button class="tab-btn" onclick="showSection('announcements')">Announcements</button>
+                <button class="tab-btn" onclick="showSection('materials')">Materials</button>
+                <!--<button class="tab-btn" onclick="showSection('activity-logs')">Activity Logs</button>-->
+                <button class="tab-btn" onclick="showSection('audit-logs'); if(typeof loadAuditLogs === 'function') loadAuditLogs();">Audit Logs</button>
+                <button class="tab-btn" onclick="showSection('settings')">Settings</button>
+            </div>
+
+            <div id="classes-section" class="tab-section active">
+                <h3>Manage Classes</h3>
+                <div id="alert-container-classes"></div>
+                <form id="classForm" style="max-width: 500px; margin-bottom: 30px;">
+                    <input type="hidden" id="classId" name="classId">
+                    <div class="form-group">
+                        <label for="className">Class Name</label>
+                        <input type="text" id="className" name="className" required>
+                    </div>
+                    <button type="submit" class="btn" id="classSubmitBtn">Add Class</button>
+                    <button type="button" class="btn btn-danger" id="classCancelBtn" onclick="cancelClassEdit()" style="display: none; margin-left: 10px;">Cancel</button>
+                </form>
+                <div style="margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                    <input type="text" id="classSearchInput" placeholder="Search classes..." style="max-width: 300px;" onkeyup="filterClasses()">
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Class Name</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="classes-tbody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="courses-section" class="tab-section">
+                <h3>Manage Courses</h3>
+                <div id="alert-container-courses"></div>
+                <form id="courseForm" style="max-width: 500px; margin-bottom: 30px;">
+                    <input type="hidden" id="courseId" name="courseId">
+                    <div class="form-group">
+                        <label for="courseSubject">Subject Name</label>
+                        <input type="text" id="courseSubject" name="courseSubject" list="courseSubjectsList" autocomplete="off" required>
+                        <datalist id="courseSubjectsList">
+                        </datalist>
+                    </div>
+                    <div class="form-group">
+                        <label for="courseClass">Class</label>
+                        <select id="courseClass" name="courseClass" required>
+                            <option value="">-- Select Class --</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn" id="courseSubmitBtn">Add Course</button>
+                    <button type="button" class="btn btn-danger" id="courseCancelBtn" onclick="cancelCourseEdit()" style="display: none; margin-left: 10px;">Cancel</button>
+                </form>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Subject</th>
+                                <th>Class</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="courses-tbody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="users-section" class="tab-section">
+                <h3>Manage Users</h3>
+                <div id="alert-container-users"></div>
+                <div style="margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                    <button class="btn btn-success" onclick="showAddUserModal('student')">+ Add Student</button>
+                    <button class="btn btn-success" onclick="showAddUserModal('lecturer')">+ Add Lecturer</button>
+                    <input type="text" id="userSearchInput" placeholder="Search users..." style="margin-left: auto; max-width: 300px;" onkeyup="filterUsers()">
+                    <select id="userFilterType" onchange="filterUsers()" style="max-width: 200px;">
+                        <option value="">All Users</option>
+                        <option value="students">Students Only</option>
+                        <option value="lecturers">Lecturers Only</option>
+                    </select>
+                </div>
+                <div class="nav-tabs" style="margin-bottom: 20px;">
+                    <button class="tab-btn active" onclick="showUserTab('students')">Students</button>
+                    <button class="tab-btn" onclick="showUserTab('lecturers')">Lecturers</button>
+                </div>
+                <div id="students-tab" class="user-tab active">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Rank</th>
+                                    <th>Name</th>
+                                    <th>Username</th>
+                                    <th>Telephone</th>
+                                    <th>Email</th>
+                                    <th>Class</th>
+                                    <th>Registered Subjects</th>
+                                    <th>Registered</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="students-tbody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div id="lecturers-tab" class="user-tab">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Rank</th>
+                                    <th>Name</th>
+                                    <th>Username</th>
+                                    <th>Telephone</th>
+                                    <th>Email</th>
+                                    <th>Subjects</th>
+                                    <th>Classes</th>
+                                    <th>Registered</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="lecturers-tbody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="password-reset-section" class="tab-section">
+                <h3>Reset User Passwords</h3>
+                <div id="alert-container-password"></div>
+                <div class="nav-tabs" style="margin-bottom: 20px;">
+                    <button class="tab-btn active" onclick="showPasswordTab('students')">Students</button>
+                    <button class="tab-btn" onclick="showPasswordTab('lecturers')">Lecturers</button>
+                </div>
+                <div id="password-students-tab" class="user-tab active">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Rank</th>
+                                    <th>Name</th>
+                                    <th>Username</th>
+                                    <th>Telephone</th>
+                                    <th>Class</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="password-students-tbody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div id="password-lecturers-tab" class="user-tab">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Rank</th>
+                                    <th>Name</th>
+                                    <th>Username</th>
+                                    <th>Telephone</th>
+                                    <th>Email</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="password-lecturers-tbody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="written-marks-section" class="tab-section">
+                <h3>Enter Written Exam Marks</h3>
+                <div id="alert-container-written-marks"></div>
+                <p style="margin-bottom: 20px; color: var(--text-light);">
+                    Enter marks for written exams. These marks will be used to calculate Final Exam composite scores.
+                </p>
+                
+                <!-- Step 1: Select Student -->
+                <div id="written-marks-step1" style="margin-bottom: 30px;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;">
+                        <div style="position: relative;">
+                            <label style="display: block; margin-bottom: 8px; font-weight: bold;">Option A: Search Student</label>
+                            <input type="text" id="written-marks-student-search" placeholder="Type name or username..." 
+                                   oninput="searchStudentsForMarks(this.value)"
+                                   style="width: 100%; padding: 12px; font-size: 1rem; border: 2px solid var(--border-color); border-radius: 8px;">
+                            <div id="student-search-results" class="search-dropdown-container" style="display: none;"></div>
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 8px; font-weight: bold;">Option B: Select from List</label>
+                            <select id="written-marks-student-select" onchange="selectStudentFromDropdown(this.value)" 
+                                    style="width: 100%; padding: 12px; font-size: 1rem; border: 2px solid var(--border-color); border-radius: 8px; background-color: white;">
+                                <option value="">-- Browse All Students --</option>
+                            </select>
+                        </div>
+                    </div>
+                    <input type="hidden" id="selected-student-id">
+                </div>
+                
+                <!-- Step 2: Enter Exam Title -->
+                <div id="written-marks-step2" style="margin-bottom: 30px;">
+                    <h4>Step 2: Enter Exam Title (e.g., BFT)</h4>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <input type="text" id="written-marks-exam-type-input" value="BFT" placeholder="Enter Exam Type (e.g. BFT)" 
+                               oninput="loadStudentMarkIfSelected()"
+                               style="max-width: 400px; padding: 10px; font-size: 1rem; border: 2px solid var(--border-color); border-radius: 8px;">
+                    </div>
+                    <p style="margin-top: 10px; color: var(--text-light); font-size: 1rem;">
+                        <strong>Note:</strong> Manual entry items are automatically calculated as <strong>5%</strong> of the final score (Mark / 100 * 5).
+                    </p>
+                </div>
+                
+                <!-- Marks Entry Container -->
+                <div id="written-marks-container" style="display: none;"></div>
+                
+                <!-- Composite Score Section -->
+                
+            </div>
+
+            <div id="results-section" class="tab-section">
+                <div style="background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); color: white; padding: 25px; border-radius: 12px; margin-bottom: 30px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+                    <h2 style="margin: 0 0 10px 0; font-size: 1.8rem;">Manage Result Releases</h2>
+                    <p style="margin: 0; opacity: 0.95; font-size: 1rem;">Control which exam results are visible to students. Only released results will be shown in student portals.</p>
+                </div>
+                <div id="alert-container-results"></div>
+                
+                <!-- Dedicated Mid Course Exam Release Section -->
+                <div style="background: var(--card-bg); border: 2px solid var(--border-color); border-radius: 12px; padding: 25px; margin-bottom: 30px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 15px;">
+                        <div>
+                            <h3 style="margin: 0; color: var(--primary-color); font-size: 1.4rem;">📋 Release Mid Course Exam Results</h3>
+                            <p style="margin: 5px 0 0 0; color: var(--text-light); font-size: 1rem;">
+                                Release Mid Course Exam results for students. These results will appear in the student portal and be included in final composite calculations.
+                            </p>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 20px;">
+                        <select id="mid-course-release-class-select" onchange="loadMidCourseExamsForRelease()" style="max-width: 400px; padding: 12px; font-size: 1rem; border: 2px solid var(--border-color); border-radius: 8px; background: white;">
+                            <option value="">-- Select Class --</option>
+                        </select>
+                    </div>
+                    <div id="mid-course-release-container"></div>
+                </div>
+                
+                <!-- Other Result Releases -->
+                <div style="background: var(--card-bg); border: 2px solid var(--border-color); border-radius: 12px; padding: 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);">
+                    <h3 style="margin: 0 0 20px 0; color: var(--primary-color); font-size: 1.4rem;">📊 Other Exam Result Releases</h3>
+                    <div style="margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button class="btn btn-success" onclick="bulkReleaseResults('Mid Semester', true)">Release All Mid Semester</button>
+                        <button class="btn btn-success" onclick="bulkReleaseResults('Final Exam', true)">Release All Final Exam</button>
+                        <button class="btn btn-danger" onclick="bulkReleaseResults('Mid Semester', false)">Hide All Mid Semester</button>
+                        <button class="btn btn-danger" onclick="bulkReleaseResults('Final Exam', false)">Hide All Final Exam</button>
+                    </div>
+                    <div class="nav-tabs" style="margin-bottom: 20px;">
+                        <button class="tab-btn active" onclick="showResultTab('mid')">Mid Semester</button>
+                        <button class="tab-btn" onclick="showResultTab('final')">Final Exam</button>
+                        <button class="tab-btn" onclick="showResultTab('all')">All Results</button>
+                    </div>
+                <div id="results-mid-tab" class="user-tab active">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Exam Title</th>
+                                    <th>Subject</th>
+                                    <th>Class</th>
+                                    <th>Total Submissions</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="results-mid-tbody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div id="results-final-tab" class="user-tab">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Exam Title</th>
+                                    <th>Subject</th>
+                                    <th>Class</th>
+                                    <th>Total Submissions</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="results-final-tbody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div id="results-all-tab" class="user-tab">
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Exam Title</th>
+                                    <!-- <th>Type</th> -->
+                                    <th>Subject</th>
+                                    <th>Class</th>
+                                    <th>Total Submissions</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="results-all-tbody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                </div>
+            </div>
+
+            <div id="exams-section" class="tab-section">
+                <h3>Manage All Exams</h3>
+                <div id="alert-container-exams"></div>
+                <div style="margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap;">
+                    <input type="text" id="examSearchInput" placeholder="Search exams..." style="max-width: 300px;" onkeyup="filterExams()">
+                    <select id="examFilterType" onchange="filterExams()" style="max-width: 200px;">
+                        <option value="">All Types</option>
+                        <option value="Mid Semester">Mid Semester</option>
+                        <option value="Final Exam">Final Exam</option>
+                        <option value="Quiz">Quiz</option>
+                    </select>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Title</th>
+                                <!-- <th>Type</th> -->
+                                <th>Subject</th>
+                                <th>Classes</th>
+                                <th>Lecturer</th>
+                                <th>Start Time</th>
+                                <th>Duration</th>
+                                <th>Questions</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="exams-tbody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="announcements-section" class="tab-section">
+                <h3>Manage Announcements</h3>
+                <div id="alert-container-announcements"></div>
+                <div style="margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                    <button class="btn btn-success" onclick="showAddAnnouncementModal()">+ Add Announcement</button>
+                    <input type="text" id="announcementSearchInput" placeholder="Search announcements..." style="margin-left: auto; max-width: 300px;" onkeyup="filterAnnouncements()">
+                    <select id="announcementFilterTarget" onchange="filterAnnouncements()" style="max-width: 200px;">
+                        <option value="">All Targets</option>
+                        <option value="all">All Users</option>
+                        <option value="students">Students Only</option>
+                        <option value="lecturers">Lecturers Only</option>
+                        <option value="class">Specific Classes</option>
+                    </select>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                    <th>Title</th>
+                                    <th>Content</th>
+                                    <th>Author</th>
+                                    <th>Target</th>
+                                    <th>Classes</th>
+                                    <th>Created</th>
+                                    <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="announcements-tbody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="materials-section" class="tab-section">
+                <h3>Manage All Materials</h3>
+                <div id="alert-container-materials"></div>
+                <div style="margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap;">
+                    <input type="text" id="materialSearchInput" placeholder="Search materials..." style="max-width: 300px;" onkeyup="filterMaterials()">
+                    <select id="materialFilterSubject" onchange="filterMaterials()" style="max-width: 200px;">
+                        <option value="">All Subjects</option>
+                    </select>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Title</th>
+                                <th>Subject</th>
+                                <th>Class</th>
+                                <th>Lecturer</th>
+                                <th>Type</th>
+                                <th>Uploaded</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="materials-tbody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="settings-section" class="tab-section">
+                <h3>Administrative Settings</h3>
+                <div id="alert-container-settings"></div>
+
+                <div class="card" style="margin-bottom: 20px;">
+                    <h4 style="color: var(--primary-color); border-bottom: 1px solid var(--border-color); padding-bottom: 10px; margin-bottom: 15px;">
+                        Student Permissions
+                    </h4>
+                    
+                    <div style="display: flex; align-items: center; justify-content: space-between; padding: 15px 0;">
+                        <div>
+                            <strong style="display: block; font-size: 1.1em; margin-bottom: 5px;">Allow Result Printing</strong>
+                            <span style="color: var(--text-light); font-size: 0.9em;">
+                                If enabled, ALL students can print/download their exam results as PDF.
+                                <br>If disabled, the "Print" button will be locked for everyone.
+                            </span>
+                        </div>
+                        <label class="switch" style="position: relative; display: inline-block; width: 60px; height: 34px;">
+                            <input type="checkbox" id="setting-allow-printing" onchange="toggleResultPrinting(this)">
+                            <span class="slider round" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px;"></span>
+                            <style>
+                                .switch input { opacity: 0; width: 0; height: 0; }
+                                .slider:before { position: absolute; content: ""; height: 26px; width: 26px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+                                input:checked + .slider { background-color: var(--success-color); }
+                                input:checked + .slider:before { transform: translateX(26px); }
+                            </style>
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="card" style="margin-bottom: 20px;">
+                     <h4 style="color: var(--primary-color); border-bottom: 1px solid var(--border-color); padding-bottom: 10px; margin-bottom: 15px;">
+                        System Info
+                    </h4>
+                    <p><strong>LMS Version:</strong> 2.5.0</p>
+                    <p><strong>Database Status:</strong> <span style="color: var(--success-color); font-weight: bold;">Connected</span></p>
+                </div>
+                
+                <div class="card" style="margin-bottom: 30px;">
+                    <h4>Lecturer Registration Keys</h4>
+                    <p>Generate one-time use keys for new lecturers to register.</p>
+                    <div style="margin: 20px 0;">
+                        <button class="btn btn-primary" onclick="generateRegistrationKey()">Generate Lecturer Key</button>
+                    </div>
+                    
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Registration Key</th>
+                                    <th>Created At</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="registration-keys-tbody">
+                                <!-- Keys will be loaded here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add User Modal -->
+    <div id="addUserModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('addUserModal')">&times;</span>
+            <h3 id="addUserModalTitle">Add User</h3>
+            <div id="alert-container-add-user"></div>
+            <form id="addUserForm">
+                <input type="hidden" id="addUserType" name="userType">
+                <input type="hidden" id="addUserId" name="userId">
+                <div class="form-group">
+                    <label>Rank</label>
+                    <input type="text" id="addUserRank" name="rank" required>
+                </div>
+                <div class="form-group">
+                    <label>Full Name</label>
+                    <input type="text" id="addUserFullName" name="fullName" required>
+                </div>
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" id="addUserUsername" name="username" required>
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="addUserPassword" name="password" required>
+                </div>
+                <div class="form-group">
+                    <label>Telephone</label>
+                    <input type="tel" id="addUserTelephone" name="telephone">
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="addUserEmail" name="email">
+                </div>
+                <div class="form-group" id="addUserClassGroup">
+                    <label>Class</label>
+                    <select id="addUserClass" name="class">
+                        <option value="">-- Select Class --</option>
+                    </select>
+                </div>
+                <!-- Print Permission Checkbox (Students Only) -->
+                <div class="form-group" id="addUserPrintGroup" style="display: none; margin-top: 15px;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <input type="checkbox" id="addUserCanPrint" name="canPrint" style="width: auto;">
+                        <label for="addUserCanPrint" style="margin: 0; cursor: pointer;">Allow Printing Results</label>
+                    </div>
+                    <small style="color: var(--text-light); display: block; margin-top: 5px;">
+                        If checked, the student can download/print their result slips.
+                    </small>
+                </div>
+                <div class="form-group" id="addUserSubjectsGroup" style="display: none;">
+                    <label>Subjects (comma-separated)</label>
+                    <input type="text" id="addUserSubjects" name="subjects" placeholder="e.g., Mathematics, Physics">
+                </div>
+                <div class="form-group" id="addUserLecturerClassesGroup" style="display: none;">
+                    <label>Classes (comma-separated)</label>
+                    <input type="text" id="addUserLecturerClasses" name="lecturerClasses" placeholder="e.g., Class A, Class B">
+                </div>
+                <button type="submit" class="btn">Save User</button>
+                <button type="button" class="btn btn-danger" onclick="closeModal('addUserModal')" style="margin-left: 10px;">Cancel</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add Announcement Modal -->
+    <div id="addAnnouncementModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('addAnnouncementModal')">&times;</span>
+            <h3 id="addAnnouncementModalTitle">Add Announcement</h3>
+            <div id="alert-container-add-announcement"></div>
+            <form id="addAnnouncementForm">
+                <input type="hidden" id="addAnnouncementId" name="announcementId">
+                <div class="form-group">
+                    <label>Title</label>
+                    <input type="text" id="addAnnouncementTitle" name="title" required>
+                </div>
+                <div class="form-group">
+                    <label>Content</label>
+                    <textarea id="addAnnouncementContent" name="content" rows="5" required></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Target Audience</label>
+                    <select id="addAnnouncementTarget" name="target" required onchange="toggleAnnouncementClasses()">
+                        <option value="all">All Users</option>
+                        <option value="students">Students Only</option>
+                        <option value="lecturers">Lecturers Only</option>
+                        <option value="class">Specific Classes</option>
+                    </select>
+                </div>
+                <div class="form-group" id="addAnnouncementClassesGroup" style="display: none;">
+                    <label>Classes (select multiple)</label>
+                    <div id="addAnnouncementClassesContainer" class="checkbox-group"></div>
+                </div>
+                <button type="submit" class="btn">Save Announcement</button>
+                <button type="button" class="btn btn-danger" onclick="closeModal('addAnnouncementModal')" style="margin-left: 10px;">Cancel</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="confirmModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 500px;">
+            <h3 id="confirmModalTitle">Confirm Action</h3>
+            <p id="confirmModalMessage"></p>
+            <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                <button class="btn btn-danger" id="confirmModalCancel">Cancel</button>
+                <button class="btn" id="confirmModalConfirm">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alert Modal -->
+    <div id="alertModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 500px;">
+            <h3 id="alertModalTitle">Alert</h3>
+            <p id="alertModalMessage"></p>
+            <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
+                <button class="btn" id="alertModalOk">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Result Details Modal -->
+    <div id="resultDetailsModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 900px;">
+            <span class="close" onclick="closeModal('resultDetailsModal')">&times;</span>
+            <h3 id="resultDetailsModalTitle">Exam Results</h3>
+            <div id="resultDetailsContent" style="margin-top: 20px;">
+                <!-- Results will be loaded here -->
+            </div>
+            <div style="display: flex; justify-content: flex-end; margin-top: 20px;">
+                <button class="btn" onclick="closeModal('resultDetailsModal')">Close</button>
+                <button class="btn btn-success" onclick="exportExamResults()" style="margin-left: 10px;">Export CSV</button>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.6);
+        }
+        .modal-content {
+            background-color: var(--card-bg);
+            margin: 5% auto;
+            padding: 30px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        .close {
+            color: var(--text-light);
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .close:hover {
+            color: var(--primary-color);
+        }
+        .checkbox-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .checkbox-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .sortable {
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+        }
+        .sortable:hover {
+            background-color: var(--border-color);
+        }
+        .sortable::after {
+            content: ' ↕';
+            opacity: 0.5;
+            font-size: 0.8em;
+        }
+        .sortable.asc::after {
+            content: ' ↑';
+            opacity: 1;
+        }
+        .sortable.desc::after {
+            content: ' ↓';
+            opacity: 1;
+        }
+        .result-table {
+            width: 100%;
+            margin-top: 15px;
+        }
+        .result-table th {
+            background-color: var(--border-color);
+            padding: 10px;
+            text-align: left;
+        }
+        .result-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        /* Search Dropdown */
+        .search-dropdown-container {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 5px;
+        }
+        .search-result-item {
+            padding: 12px 15px;
+            cursor: pointer;
+            border-bottom: 1px solid var(--border-color);
+            transition: background 0.2s;
+        }
+        .search-result-item:last-child {
+            border-bottom: none;
+        }
+        .search-result-item:hover {
+            background-color: var(--light-color);
+        }
+        .search-result-item .student-name {
+            font-weight: bold;
+            display: block;
+        }
+        .search-result-item .student-info {
+            font-size: 1rem;
+            color: var(--text-light);
+        }
+
+        /* Responsive Table & Pagination */
+        @media (max-width: 768px) {
+            .table-container {
+                overflow-x: auto;
+            }
+            .table-container table {
+                min-width: 600px; /* Ensure table doesn't squish too much */
+            }
+        }
+        
+        .pagination-controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .pagination-btn {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .pagination-btn:hover:not(:disabled) {
+            background: var(--light-color);
+            border-color: var(--primary-color);
+        }
+        
+        .pagination-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    </style>
+    
+            <!-- Audit Logs Section -->
+            <div id="audit-logs-section" class="tab-section">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 15px;">
+                    <div>
+                        <h3 style="margin: 0;">System Audit Logs</h3>
+                        <p style="margin: 5px 0 0 0; color: var(--text-light); font-size: 0.9em;">Monitor system activities, logins, and changes.</p>
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn btn-secondary" onclick="loadAuditLogs(1)" title="Refresh Logs">
+                            🔄 Refresh
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-container" style="background: var(--card-bg); border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); overflow: hidden;">
+                    <table id="audit-logs-table" style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="background: var(--light-color); color: var(--text-color); border-bottom: 2px solid var(--border-color);">
+                                <th style="padding: 15px; text-align: left; font-weight: 600;">Time</th>
+                                <th style="padding: 15px; text-align: left; font-weight: 600;">Action Type</th>
+                                <th style="padding: 15px; text-align: left; font-weight: 600;">Performed By</th>
+                                <th style="padding: 15px; text-align: left; font-weight: 600;">Description</th>
+                                <th style="padding: 15px; text-align: center; font-weight: 600;">Details</th>
+                            </tr>
+                        </thead>
+                        <tbody id="audit-logs-tbody">
+                            <tr><td colspan="5" style="text-align: center; padding: 30px; color: var(--text-light);">Loading logs...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div class="pagination-controls" id="audit-logs-pagination" style="display: none;">
+                    <button class="pagination-btn" id="audit-prev-btn" onclick="changeAuditLogPage(-1)">Previous</button>
+                    <span id="audit-page-info">Page 1 of 1 (0 items)</span>
+                    <button class="pagination-btn" id="audit-next-btn" onclick="changeAuditLogPage(1)">Next</button>
+                </div>
+            </div>
+
+            <!-- Log Details Modal -->
+            <div id="logDetailsModal" class="modal" style="display: none;">
+                <div class="modal-content" style="max-width: 600px;">
+                    <span class="modal-close" onclick="document.getElementById('logDetailsModal').style.display='none'">&times;</span>
+                    <h3 style="margin-top: 0; color: var(--primary-color);">Log Details</h3>
+                    <div id="log-details-content" style="background: var(--light-color); padding: 15px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; font-family: monospace; font-size: 0.9em; max-height: 400px; overflow-y: auto;"></div>
+                </div>
+            </div>
+
+    <!-- Chatbot -->
+    <div id="chatbot-container">
+        <div id="chatbot-button" onclick="toggleChatbot()" title="Open Chat Assistant">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+            </svg>
+        </div>
+        <div id="chatbot-window">
+            <div class="chatbot-header">
+                <div class="chatbot-header-info">
+                    <div class="chatbot-avatar">🤖</div>
+                    <div>
+                        <h4>Frank</h4>
+                        <span class="chatbot-status">Online • Knowledge is power</span>
+                    </div>
+                </div>
+                <div class="chatbot-header-actions">
+                    <button onclick="clearChatbot()" title="Clear Chat" class="chatbot-icon-btn">🗑️</button>
+                    <button onclick="closeChatbot()" title="Close" class="chatbot-icon-btn">×</button>
+                </div>
+            </div>
+            <div id="chatbot-messages"></div>
+            <form id="chatbot-form" class="chatbot-input-area">
+                <textarea id="chatbot-input" placeholder="Type your message..." rows="1"></textarea>
+                <button type="submit" class="chatbot-send-btn" title="Send">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13"></line>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                    </svg>
+                </button>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Migration Tool (Commented out)
+    <button onclick="if(confirm('Start migration? This may take a while.')) window.migrateToSupabase()" style="position: fixed; bottom: 80px; left: 20px; z-index: 9999; padding: 10px 20px; background: #FF5722; color: white; border: none; border-radius: 5px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+        🚀 Migrate Data to Supabase
+    </button>
+    -->
+
+    <script src="../js/api-service.js?v=3" defer></script>
+    <script src="../js/app.js" defer></script>
+    <script src="../js/admin-dashboard.js" defer></script>
+    <script src="../js/admin-written-marks.js" defer></script>
+    <script src="../js/notifications.js" defer></script>
+    <script src="../js/chatbot-data-access.js" defer></script>
+    <script src="../js/chatbot-api.js" defer></script>
+    <script src="../js/chatbot-config.js" defer></script>
+    <script src="../js/chatbot.js" defer></script>
+    <script src="../js/carousel.js" defer></script>
+</body>
+</html>

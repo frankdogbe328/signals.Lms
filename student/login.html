@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Login - Signals School LMS</title>
+    <link rel="icon" type="image/jpeg" href="../logo.jpeg">
+    <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+    <div id="background-carousel" data-img-path="../"></div>
+    <div class="container">
+        <div class="form-container">
+            <div class="login-logo">
+                <img src="../logo.jpeg" alt="Signals Training School Logo" class="school-logo-small">
+            </div>
+            <h2>Student Portal Login</h2>
+            <div id="alert-container"></div>
+            <form id="loginForm">
+                <div class="form-group">
+                    <label for="username">Username/Email</label>
+                    <input type="text" id="username" name="username" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="password" name="password" required>
+                        <button type="button" class="eye-toggle" onclick="togglePassword('password')" title="Show password">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <button type="submit" class="btn">Login</button>
+            </form>
+            <div class="link-text">
+                <a href="#" onclick="showForgotPassword(); return false;">Forgot Password?</a>
+            </div>
+            <div class="link-text">
+                Don't have an account? <a href="register.html">Register here</a>
+            </div>
+            <!--<div class="link-text">
+                <a href="../index.html">← Back to Portal Selection</a>
+            </div>-->
+        </div>
+    </div>
+    
+    <!-- Forgot Password Modal -->
+    <div id="forgotPasswordModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 500px;">
+            <span class="close" onclick="closeForgotPassword()" style="top: 15px; right: 15px;">&times;</span>
+            <h2 style="margin-bottom: 20px;">Reset Password</h2>
+            <div id="forgot-password-alert"></div>
+            <form id="forgotPasswordForm">
+                <div class="form-group">
+                    <label for="resetUsername">Username/Email</label>
+                    <input type="text" id="resetUsername" name="resetUsername" required placeholder="Enter your username or email">
+                </div>
+                <div class="form-group">
+                    <label for="resetTelephone">Telephone Number</label>
+                    <input type="text" id="resetTelephone" name="resetTelephone" required placeholder="Enter your telephone number for verification">
+                    <small style="color: var(--text-light);">Enter the telephone number you registered with</small>
+                </div>
+                <div class="form-group">
+                    <label for="newPassword">New Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="newPassword" name="newPassword" required minlength="6" placeholder="Enter new password (min 6 characters)">
+                        <button type="button" class="eye-toggle" onclick="togglePassword('newPassword')" title="Show password">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="confirmNewPassword">Confirm New Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="confirmNewPassword" name="confirmNewPassword" required minlength="6" placeholder="Confirm new password">
+                        <button type="button" class="eye-toggle" onclick="togglePassword('confirmNewPassword')" title="Show password">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <button type="submit" class="btn" style="width: 100%;">Reset Password</button>
+                <button type="button" class="btn btn-secondary" onclick="closeForgotPassword()" style="width: 100%; margin-top: 10px;">Cancel</button>
+            </form>
+        </div>
+    </div>
+    
+    <script src="../js/api-service.js?v=3"></script>
+    <script src="../js/app.js"></script>
+    <script src="../js/student-auth.js?v=2"></script>
+    <script src="../js/carousel.js"></script>
+</body>
+</html>
