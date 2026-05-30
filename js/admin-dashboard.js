@@ -1705,6 +1705,98 @@ window.cancelCourseEdit = function() {
     document.getElementById('courseCancelBtn').style.display = 'none';
 };
 
+// Bulk Course Import
+window.openBulkCourseModal = async function() {
+    const modal = document.getElementById('bulkCourseModal');
+    const select = document.getElementById('bulkCourseClass');
+    if (!modal || !select) return;
+
+    // Populate class dropdown
+    select.innerHTML = '<option value="">-- Select Class --</option>';
+    try {
+        const classes = await getClasses();
+        [...classes].filter(c => c && c.name).sort((a, b) => a.name.localeCompare(b.name)).forEach(cls => {
+            const opt = document.createElement('option');
+            opt.value = cls.name;
+            opt.textContent = cls.name;
+            select.appendChild(opt);
+        });
+    } catch (e) { console.warn('Could not load classes for bulk modal', e); }
+
+    document.getElementById('bulkCourseNames').value = '';
+    document.getElementById('bulk-course-alert').innerHTML = '';
+    document.getElementById('bulkCourseProgress').style.display = 'none';
+    document.getElementById('bulkProgressBar').style.width = '0%';
+    document.getElementById('bulkImportBtn').disabled = false;
+    modal.style.display = 'block';
+};
+
+window.closeBulkCourseModal = function() {
+    const modal = document.getElementById('bulkCourseModal');
+    if (modal) modal.style.display = 'none';
+};
+
+window.runBulkCourseImport = async function() {
+    const className = document.getElementById('bulkCourseClass').value.trim();
+    const raw = document.getElementById('bulkCourseNames').value;
+    const alertEl = document.getElementById('bulk-course-alert');
+    const progressWrap = document.getElementById('bulkCourseProgress');
+    const bar = document.getElementById('bulkProgressBar');
+    const progressText = document.getElementById('bulkProgressText');
+    const btn = document.getElementById('bulkImportBtn');
+
+    if (!className) {
+        alertEl.innerHTML = '<div class="alert alert-error">Please select a class first.</div>';
+        return;
+    }
+
+    const names = raw.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+    if (names.length === 0) {
+        alertEl.innerHTML = '<div class="alert alert-error">Please enter at least one course name.</div>';
+        return;
+    }
+
+    btn.disabled = true;
+    alertEl.innerHTML = '';
+    progressWrap.style.display = 'block';
+
+    let added = 0, skipped = 0, failed = 0;
+
+    for (let i = 0; i < names.length; i++) {
+        const subject = names[i];
+        const pct = Math.round(((i + 1) / names.length) * 100);
+        bar.style.width = pct + '%';
+        progressText.textContent = `Processing ${i + 1} of ${names.length}: ${subject}`;
+
+        try {
+            await saveCourse({ subject, class: className });
+            added++;
+        } catch (err) {
+            const msg = (err && err.message) || '';
+            if (msg.toLowerCase().includes('conflict') || msg.toLowerCase().includes('already') || msg.toLowerCase().includes('duplicate')) {
+                skipped++;
+            } else {
+                console.warn('Failed to add course:', subject, err);
+                failed++;
+            }
+        }
+    }
+
+    bar.style.width = '100%';
+    progressText.textContent = '';
+    invalidateCache('courses');
+    await loadCourses();
+    updateDashboardStats();
+
+    const parts = [];
+    if (added > 0) parts.push(`<strong>${added}</strong> added`);
+    if (skipped > 0) parts.push(`<strong>${skipped}</strong> already existed (skipped)`);
+    if (failed > 0) parts.push(`<strong>${failed}</strong> failed`);
+
+    alertEl.innerHTML = `<div class="alert alert-success">Import complete — ${parts.join(', ')}.</div>`;
+    btn.disabled = false;
+};
+
 // User Management
 window.showAddUserModal = function(userType) {
     const modal = document.getElementById('addUserModal');

@@ -114,6 +114,9 @@
                     <button type="submit" class="btn" id="courseSubmitBtn">Add Course</button>
                     <button type="button" class="btn btn-danger" id="courseCancelBtn" onclick="cancelCourseEdit()" style="display: none; margin-left: 10px;">Cancel</button>
                 </form>
+                <div style="margin-bottom: 20px;">
+                    <button class="btn btn-secondary" onclick="openBulkCourseModal()">&#8679; Bulk Import Courses</button>
+                </div>
                 <div class="table-container">
                     <table>
                         <thead>
@@ -915,6 +918,35 @@
         🚀 Migrate Data to Supabase
     </button>
     -->
+
+    <!-- Bulk Course Import Modal -->
+    <div id="bulkCourseModal" class="modal" style="display:none;">
+        <div class="modal-content" style="max-width:560px;">
+            <span class="close" onclick="closeBulkCourseModal()" style="top:15px;right:15px;">&times;</span>
+            <h2 style="margin-bottom:20px;">Bulk Import Courses</h2>
+            <div id="bulk-course-alert"></div>
+            <div class="form-group">
+                <label for="bulkCourseClass">Select Class</label>
+                <select id="bulkCourseClass" required>
+                    <option value="">-- Select Class --</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="bulkCourseNames">Course Names <small style="color:var(--text-light,#6b7280);">(one per line)</small></label>
+                <textarea id="bulkCourseNames" rows="12" placeholder="Signals Theory&#10;Radio Communication&#10;Military Tactics&#10;Electronics Fundamentals&#10;..." style="width:100%;resize:vertical;font-size:0.9rem;padding:10px;border:1px solid var(--border-color,#e5e7eb);border-radius:6px;font-family:inherit;"></textarea>
+            </div>
+            <div id="bulkCourseProgress" style="display:none;margin-bottom:12px;">
+                <div style="height:8px;background:var(--border-color,#e5e7eb);border-radius:4px;overflow:hidden;">
+                    <div id="bulkProgressBar" style="height:100%;width:0%;background:var(--primary-color,#2563eb);transition:width 0.2s;"></div>
+                </div>
+                <p id="bulkProgressText" style="font-size:0.85rem;color:var(--text-light,#6b7280);margin-top:6px;"></p>
+            </div>
+            <div style="display:flex;gap:10px;">
+                <button class="btn" onclick="runBulkCourseImport()" id="bulkImportBtn">Import All</button>
+                <button class="btn btn-secondary" onclick="closeBulkCourseModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
 
     <script src="../js/api-service.js?v=3" defer></script>
     <script src="../js/app.js" defer></script>
