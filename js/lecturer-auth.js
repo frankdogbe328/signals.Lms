@@ -112,6 +112,7 @@ function setupLogin() {
             }
             if (typeof window.setApiToken === 'function') window.setApiToken(data.token);
             setCurrentUser({ ...data.user, type: 'lecturer' });
+            if (typeof window.logAction === 'function') window.logAction('LECTURER_LOGIN', `Lecturer logged in: ${data.user.username || username}`, { username: data.user.username || username, userId: data.user.id });
             showAlert('Login successful! Redirecting...', 'success');
             setTimeout(() => { window.location.href = 'dashboard.html'; }, 500);
         } catch (error) {
