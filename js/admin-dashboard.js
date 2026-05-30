@@ -1,4 +1,5 @@
 // Admin Dashboard
+window._adminEntityMap = { classes: {}, courses: {}, users: {}, exams: {} };
 
 document.addEventListener('DOMContentLoaded', async function() {
     const user = getCurrentUser();
@@ -175,6 +176,9 @@ async function loadClasses() {
     const totalClassesEl = document.getElementById('totalClasses');
     if (totalClassesEl) totalClassesEl.textContent = classes.length;
 
+    window._adminEntityMap.classes = {};
+    classes.forEach(c => c && c.id && (window._adminEntityMap.classes[c.id] = c));
+
     if (classes.length === 0) {
         tbody.innerHTML = '<tr><td colspan="3" style="text-align: center;">No classes added yet</td></tr>';
         return;
@@ -260,6 +264,9 @@ async function loadCourses() {
     const totalCoursesEl = document.getElementById('totalCourses');
     if (totalCoursesEl) totalCoursesEl.textContent = courses.length;
 
+    window._adminEntityMap.courses = {};
+    courses.forEach(c => c && c.id && (window._adminEntityMap.courses[c.id] = c));
+
     if (!tbody) return;
 
     if (courses.length === 0) {
@@ -310,6 +317,10 @@ async function loadUsers() {
     const totalLecturersEl = document.getElementById('totalLecturers');
     if (totalStudentsEl) totalStudentsEl.textContent = users.students ? users.students.length : 0;
     if (totalLecturersEl) totalLecturersEl.textContent = users.lecturers ? users.lecturers.length : 0;
+
+    window._adminEntityMap.users = {};
+    (users.students || []).forEach(s => s && s.id && (window._adminEntityMap.users[s.id] = { ...s, _userType: 'student' }));
+    (users.lecturers || []).forEach(l => l && l.id && (window._adminEntityMap.users[l.id] = { ...l, _userType: 'lecturer' }));
 
     // Load students
     if (studentsTbody) {
@@ -460,6 +471,7 @@ async function performPasswordReset(userType, userId, newPassword) {
         if (typeof resetUserPassword === 'function') {
             await resetUserPassword(userId, newPassword);
             showAlert('password', `Password reset successfully. New password: ${newPassword}`, 'success');
+            if (typeof logAction === 'function') logAction('PASSWORD_RESET', `Admin reset password for ${userType} ID: ${userId}`, { userId, userType });
         } else {
             // Fallback to localStorage
             const users = getData('lms_users') || { students: [], lecturers: [] };
@@ -1148,6 +1160,7 @@ window.generateRegistrationKey = async function() {
         await saveRegistrationKey(keyData);
         await loadRegistrationKeys();
         showAlert('settings', `Generated new key: ${key}`, 'success');
+        if (typeof logAction === 'function') logAction('GENERATE_REG_KEY', `Generated lecturer registration key: ${key}`, { key });
     } catch (error) {
         console.error('Error generating key:', error);
         showAlert('settings', 'Failed to generate key. Please try again.', 'error');
@@ -1161,6 +1174,7 @@ window.handleDeleteRegistrationKey = async function(keyToDelete) {
         await deleteRegistrationKey(keyToDelete);
         await loadRegistrationKeys();
         showAlert('settings', 'Registration key revoked successfully', 'success');
+        if (typeof logAction === 'function') logAction('REVOKE_REG_KEY', `Revoked lecturer registration key: ${keyToDelete}`, { key: keyToDelete });
     } catch (error) {
         console.error('Error deleting key:', error);
         showAlert('settings', 'Failed to revoke key. Please try again.', 'error');
@@ -1201,6 +1215,7 @@ function setupForms() {
                     try {
                         await updateClass(classId, className);
                         showAlert('classes', 'Class updated successfully', 'success');
+                        if (typeof logAction === 'function') logAction('UPDATE_CLASS', `Updated class: ${className}`, { classId, className });
                         cancelClassEdit();
                         await loadClasses();
                         await loadCourses();
@@ -1230,6 +1245,7 @@ function setupForms() {
                     try {
                         await saveClass(className);
                         showAlert('classes', 'Class added successfully', 'success');
+                        if (typeof logAction === 'function') logAction('ADD_CLASS', `Added class: ${className}`, { className });
                         document.getElementById('className').value = '';
                         await loadClasses();
                         await loadCourses();
@@ -1289,6 +1305,7 @@ function setupForms() {
                     try {
                         await updateCourse(courseId, { subject, class: courseClass });
                         showAlert('courses', 'Course updated successfully', 'success');
+                        if (typeof logAction === 'function') logAction('UPDATE_COURSE', `Updated course: ${subject} (${courseClass})`, { courseId, subject, class: courseClass });
                         cancelCourseEdit();
                         await loadCourses();
                         return;
@@ -1318,6 +1335,7 @@ function setupForms() {
                     try {
                         await saveCourse({ subject, class: courseClass });
                         showAlert('courses', 'Course added successfully', 'success');
+                        if (typeof logAction === 'function') logAction('ADD_COURSE', `Added course: ${subject} (${courseClass})`, { subject, class: courseClass });
                         document.getElementById('courseForm').reset();
                         await loadCourses();
                         return;
@@ -1356,11 +1374,14 @@ window.handleDeleteClass = function(classId) {
 }
 
 async function performDeleteClass(classId) {
-    // Try Supabase first (using window.deleteClass to avoid dashboard-local conflict)
+    const _cls = (window._adminEntityMap.classes || {})[classId];
+    const _className = _cls ? _cls.name : classId;
+
     if (typeof window.deleteClass === 'function') {
         try {
             await window.deleteClass(classId);
             showAlert('classes', 'Class deleted successfully', 'success');
+            if (typeof logAction === 'function') logAction('DELETE_CLASS', `Deleted class: ${_className}`, { classId, className: _className });
             await loadClasses();
             await loadCourses();
             return;
@@ -1368,15 +1389,15 @@ async function performDeleteClass(classId) {
             console.warn('Supabase deleteClass failed:', error);
         }
     }
-    
-    // Fallback to localStorage
+
     const classes = getData('lms_classes') || [];
     const filtered = classes.filter(c => c && c.id !== classId);
     saveData('lms_classes', filtered);
-    
+
     showAlert('classes', 'Class deleted successfully', 'success');
+    if (typeof logAction === 'function') logAction('DELETE_CLASS', `Deleted class: ${_className}`, { classId, className: _className });
     await loadClasses();
-    await loadCourses(); // Reload to update class dropdown
+    await loadCourses();
 }
 
 window.handleDeleteCourse = function(courseId) {
@@ -1390,24 +1411,27 @@ window.handleDeleteCourse = function(courseId) {
 }
 
 async function performDeleteCourse(courseId) {
-    // Try Supabase first (using window.deleteCourse to avoid dashboard-local conflict)
+    const _crs = (window._adminEntityMap.courses || {})[courseId];
+    const _crsDesc = _crs ? `${_crs.subject} (${_crs.class || 'N/A'})` : courseId;
+
     if (typeof window.deleteCourse === 'function') {
         try {
             await window.deleteCourse(courseId);
             showAlert('courses', 'Course deleted successfully', 'success');
+            if (typeof logAction === 'function') logAction('DELETE_COURSE', `Deleted course: ${_crsDesc}`, { courseId, subject: _crs?.subject, class: _crs?.class });
             await loadCourses();
             return;
         } catch (error) {
             console.warn('Supabase deleteCourse failed:', error);
         }
     }
-    
-    // Fallback to localStorage
+
     const courses = getData('lms_courses') || [];
     const filtered = courses.filter(c => c && c.id !== courseId);
     saveData('lms_courses', filtered);
-    
+
     showAlert('courses', 'Course deleted successfully', 'success');
+    if (typeof logAction === 'function') logAction('DELETE_COURSE', `Deleted course: ${_crsDesc}`, { courseId, subject: _crs?.subject, class: _crs?.class });
     await loadCourses();
 }
 
@@ -1794,6 +1818,7 @@ window.runBulkCourseImport = async function() {
     if (failed > 0) parts.push(`<strong>${failed}</strong> failed`);
 
     alertEl.innerHTML = `<div class="alert alert-success">Import complete — ${parts.join(', ')}.</div>`;
+    if (typeof logAction === 'function' && added > 0) logAction('BULK_IMPORT_COURSES', `Bulk imported ${added} course(s) for class: ${className}`, { className, added, skipped, failed, courses: names });
     btn.disabled = false;
 };
 
@@ -1937,11 +1962,14 @@ window.handleDeleteUser = function(userType, userId) {
 }
 
 async function performDeleteUser(userType, userId) {
-    // Try Supabase first (using window.deleteUser to avoid dashboard-local conflict)
+    const _usr = (window._adminEntityMap.users || {})[userId];
+    const _usrDesc = _usr ? `${_usr.fullName || _usr.full_name || ''} (${_usr.username || ''})`.trim() : userId;
+
     if (typeof window.deleteUser === 'function') {
         try {
             await window.deleteUser(userId, userType);
             showAlert('users', `${userType.charAt(0).toUpperCase() + userType.slice(1)} deleted successfully`, 'success');
+            if (typeof logAction === 'function') logAction('DELETE_USER', `Deleted ${userType}: ${_usrDesc}`, { userId, userType, fullName: _usr?.fullName || _usr?.full_name, username: _usr?.username });
             await loadUsers();
             loadPasswordReset();
             return;
@@ -1949,18 +1977,18 @@ async function performDeleteUser(userType, userId) {
             console.warn('Supabase deleteUser failed:', error);
         }
     }
-    
-    // Fallback to localStorage
+
     const users = getData('lms_users') || { students: [], lecturers: [] };
-    
+
     if (userType === 'student') {
         users.students = users.students.filter(s => s && s.id !== userId);
     } else {
         users.lecturers = users.lecturers.filter(l => l && l.id !== userId);
     }
-    
+
     saveData('lms_users', users);
     showAlert('users', `${userType.charAt(0).toUpperCase() + userType.slice(1)} deleted successfully`, 'success');
+    if (typeof logAction === 'function') logAction('DELETE_USER', `Deleted ${userType}: ${_usrDesc}`, { userId, userType, fullName: _usr?.fullName || _usr?.full_name, username: _usr?.username });
     await loadUsers();
     loadPasswordReset();
 };
@@ -2026,6 +2054,7 @@ function setupUserForm() {
                             can_print_results: canPrint
                         });
                         showAlert('add-user', 'Student updated successfully', 'success');
+                        if (typeof logAction === 'function') logAction('UPDATE_STUDENT', `Updated student: ${fullName} (${username}), Class: ${classValue}`, { userId, username, fullName, rank, class: classValue });
                         closeModal('addUserModal');
                         await loadUsers();
                         await loadPasswordReset();
@@ -2080,6 +2109,7 @@ function setupUserForm() {
                     try {
                         await saveUser(newStudent);
                         showAlert('add-user', 'Student added successfully', 'success');
+                        if (typeof logAction === 'function') logAction('ADD_STUDENT', `Added student: ${fullName} (${username}), Class: ${classValue}`, { username, fullName, rank, class: classValue, telephone });
                         closeModal('addUserModal');
                         await loadUsers();
                         await loadPasswordReset();
@@ -2089,12 +2119,13 @@ function setupUserForm() {
                         console.warn('Supabase saveUser failed, using localStorage:', error);
                     }
                 }
-                
+
                 // Fallback to localStorage
                 newStudent.id = Date.now().toString();
                 users.students.push(newStudent);
                 saveData('lms_users', users);
                 showAlert('add-user', 'Student added successfully', 'success');
+                if (typeof logAction === 'function') logAction('ADD_STUDENT', `Added student: ${fullName} (${username}), Class: ${classValue}`, { username, fullName, rank, class: classValue, telephone });
             }
         } else {
             const subjects = document.getElementById('addUserSubjects').value.split(',').map(s => s.trim()).filter(s => s);
@@ -2122,6 +2153,7 @@ function setupUserForm() {
                             classes: lecturerClasses
                         });
                         showAlert('add-user', 'Lecturer updated successfully', 'success');
+                        if (typeof logAction === 'function') logAction('UPDATE_LECTURER', `Updated lecturer: ${fullName} (${username})`, { userId, username, fullName, rank, subjects, classes: lecturerClasses });
                         closeModal('addUserModal');
                         await loadUsers();
                         await loadPasswordReset();
@@ -2174,6 +2206,7 @@ function setupUserForm() {
                     try {
                         await saveUser(newLecturer);
                         showAlert('add-user', 'Lecturer added successfully', 'success');
+                        if (typeof logAction === 'function') logAction('ADD_LECTURER', `Added lecturer: ${fullName} (${username})`, { username, fullName, rank, subjects, classes: lecturerClasses });
                         closeModal('addUserModal');
                         await loadUsers();
                         await loadPasswordReset();
@@ -2183,12 +2216,13 @@ function setupUserForm() {
                         console.warn('Supabase saveUser failed, using localStorage:', error);
                     }
                 }
-                
+
                 // Fallback to localStorage
                 newLecturer.id = Date.now().toString();
                 users.lecturers.push(newLecturer);
                 saveData('lms_users', users);
                 showAlert('add-user', 'Lecturer added successfully', 'success');
+                if (typeof logAction === 'function') logAction('ADD_LECTURER', `Added lecturer: ${fullName} (${username})`, { username, fullName, rank, subjects, classes: lecturerClasses });
             }
         }
         
@@ -2224,6 +2258,9 @@ async function loadExams() {
     
     const totalExamsEl = document.getElementById('totalExams');
     if (totalExamsEl) totalExamsEl.textContent = exams.length;
+
+    window._adminEntityMap.exams = {};
+    exams.forEach(e => e && e.id && (window._adminEntityMap.exams[e.id] = e));
 
     if (exams.length === 0) {
         tbody.innerHTML = '<tr><td colspan="10" style="text-align: center;">No exams found</td></tr>';
@@ -2300,24 +2337,24 @@ window.deleteExam = function(examId) {
 }
 
 function performDeleteExam(examId) {
-    
+    const _exm = (window._adminEntityMap.exams || {})[examId];
+    const _examTitle = _exm ? (_exm.title || examId) : examId;
+
     const exams = getData('lms_exams') || [];
     const results = getData('lms_results') || [];
-    
-    // Delete exam
+
     const filteredExams = exams.filter(e => e && e.id !== examId);
     saveData('lms_exams', filteredExams);
-    
-    // Delete associated results
+
     const filteredResults = results.filter(r => r && r.examId !== examId);
     saveData('lms_results', filteredResults);
-    
-    // Remove from releases
+
     const releases = getData('lms_result_releases') || {};
     delete releases[examId];
     saveData('lms_result_releases', releases);
-    
+
     showAlert('exams', 'Exam and associated results deleted successfully', 'success');
+    if (typeof logAction === 'function') logAction('DELETE_EXAM', `Deleted exam: ${_examTitle}`, { examId, title: _examTitle, subject: _exm?.subject, classes: _exm?.classes });
     loadExams();
     loadResultReleases();
     loadDashboard();
@@ -3101,26 +3138,32 @@ async function loadAuditLogs(page = 1) {
         
         currentAuditLogs.forEach((log, index) => {
             const row = document.createElement('tr');
-            
+
             const date = new Date(log.createdAt || log.created_at);
-            const dateStr = date.toLocaleString();
-            
-            // Format action type for display
-            const actionType = (log.actionType || log.action_type || '').replace(/_/g, ' ');
-            
-            // Format description (truncate if too long)
+            const dateStr = isNaN(date) ? '-' : date.toLocaleString();
+
+            const rawAction = (log.actionType || log.action_type || '');
+            const actionLabel = rawAction.replace(/_/g, ' ');
+
+            // Color-code badge by action category
+            let badgeColor = '#2563eb'; // default blue
+            if (rawAction.startsWith('ADD_') || rawAction.startsWith('BULK_')) badgeColor = '#16a34a';
+            else if (rawAction.startsWith('UPDATE_')) badgeColor = '#d97706';
+            else if (rawAction.startsWith('DELETE_')) badgeColor = '#dc2626';
+            else if (rawAction.includes('LOGIN')) badgeColor = '#7c3aed';
+            else if (rawAction.startsWith('PASSWORD_') || rawAction.includes('KEY')) badgeColor = '#0891b2';
+            else if (rawAction.startsWith('EXAM_') || rawAction.includes('SUSPICIOUS') || rawAction.includes('SECURITY')) badgeColor = '#9333ea';
+
             let description = log.description || '-';
-            if (description.length > 50) {
-                description = description.substring(0, 50) + '...';
-            }
-            
+            if (description.length > 120) description = description.substring(0, 120) + '…';
+
             row.innerHTML = `
-                <td style="font-size: 0.9em; color: var(--text-light); white-space: nowrap;">${dateStr}</td>
-                <td><span class="status-badge status-active" style="font-size: 0.85em;">${actionType}</span></td>
-                <td style="font-weight: 500;">${log.performedBy || 'System'}</td>
-                <td>${description}</td>
-                <td style="text-align: center;">
-                    <button class="btn btn-small btn-secondary" onclick="viewLogDetails(${index})">View Details</button>
+                <td style="font-size:0.85em;color:var(--text-light);white-space:nowrap;">${dateStr}</td>
+                <td><span style="display:inline-block;padding:3px 10px;border-radius:999px;font-size:0.78em;font-weight:600;color:#fff;background:${badgeColor};">${actionLabel}</span></td>
+                <td style="font-weight:500;">${log.performedBy || 'System'}</td>
+                <td style="font-size:0.9em;">${description}</td>
+                <td style="text-align:center;">
+                    <button class="btn btn-small btn-secondary" onclick="viewLogDetails(${index})">Details</button>
                 </td>
             `;
             tbody.appendChild(row);
@@ -3160,28 +3203,42 @@ function changeAuditLogPage(direction) {
 function viewLogDetails(index) {
     const log = currentAuditLogs[index];
     if (!log) return;
-    
+
     const contentDiv = document.getElementById('log-details-content');
     const modal = document.getElementById('logDetailsModal');
-    
-    if (log.metadata && typeof log.metadata === 'string') {
-        try {
-            log.metadata = JSON.parse(log.metadata);
-        } catch (e) {
-            // keep as string
-        }
+
+    let meta = log.metadata || {};
+    if (typeof meta === 'string') {
+        try { meta = JSON.parse(meta); } catch (e) { meta = {}; }
     }
-    
-    const details = {
-        id: log.id,
-        timestamp: log.createdAt || log.created_at,
-        action: log.actionType || log.action_type,
-        performer: log.performedBy,
-        description: log.description,
-        metadata: log.metadata || {}
-    };
-    
-    contentDiv.textContent = JSON.stringify(details, null, 2);
+
+    const ts = new Date(log.createdAt || log.created_at);
+    const tsStr = isNaN(ts) ? (log.createdAt || log.created_at || '-') : ts.toLocaleString();
+    const action = (log.actionType || log.action_type || '-').replace(/_/g, ' ');
+
+    const rowStyle = 'style="border-bottom:1px solid var(--border-color,#e5e7eb);padding:8px 0;"';
+    const labelStyle = 'style="font-weight:600;color:var(--text-light,#6b7280);font-size:0.82em;text-transform:uppercase;letter-spacing:0.04em;padding-right:16px;white-space:nowrap;vertical-align:top;"';
+    const valStyle = 'style="font-size:0.9em;word-break:break-word;"';
+
+    let metaRows = '';
+    const metaEntries = Object.entries(meta);
+    if (metaEntries.length > 0) {
+        metaRows = `<tr ${rowStyle}><td colspan="2" ${labelStyle} style="padding-top:12px;font-weight:700;font-size:0.85em;text-transform:uppercase;">Additional Details</td></tr>`;
+        metaEntries.forEach(([k, v]) => {
+            const display = Array.isArray(v) ? v.join(', ') : (typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v ?? '-'));
+            metaRows += `<tr ${rowStyle}><td ${labelStyle}>${k.replace(/_/g,' ')}</td><td ${valStyle}>${display}</td></tr>`;
+        });
+    }
+
+    contentDiv.innerHTML = `
+        <table style="width:100%;border-collapse:collapse;">
+            <tr ${rowStyle}><td ${labelStyle}>Timestamp</td><td ${valStyle}>${tsStr}</td></tr>
+            <tr ${rowStyle}><td ${labelStyle}>Action</td><td ${valStyle}><strong>${action}</strong></td></tr>
+            <tr ${rowStyle}><td ${labelStyle}>Performed By</td><td ${valStyle}>${log.performedBy || 'System'}</td></tr>
+            <tr ${rowStyle}><td ${labelStyle}>Description</td><td ${valStyle}>${log.description || '-'}</td></tr>
+            ${metaRows}
+        </table>
+    `;
     modal.style.display = 'flex';
 }
 
