@@ -111,12 +111,22 @@ function setupRegistration() {
                 showAlert('Please select a class', 'error');
                 return;
             }
-            
+
             if (!telephone) {
                 showAlert('Please enter your telephone number', 'error');
                 return;
             }
-            
+
+            const selectedCourses = Array.from(
+                document.querySelectorAll('input[name="subjects"]:checked')
+            ).map(cb => cb.value);
+
+            const coursesAvailable = document.querySelectorAll('input[name="subjects"]').length > 0;
+            if (coursesAvailable && selectedCourses.length === 0) {
+                showAlert('Please select at least one course', 'error');
+                return;
+            }
+
             const newStudent = {
                 rank,
                 fullName,
@@ -125,6 +135,7 @@ function setupRegistration() {
                 email,
                 password,
                 class: studentClass,
+                subjects: selectedCourses,
                 type: 'student'
             };
 
@@ -168,9 +179,64 @@ async function loadClasses() {
                 option.textContent = cls.name;
                 select.appendChild(option);
             });
+
+        select.addEventListener('change', function() {
+            const selectedClass = this.value;
+            if (selectedClass) {
+                loadSubjectsForClass(selectedClass);
+            } else {
+                const group = document.getElementById('subjectsGroup');
+                const container = document.getElementById('subjectsContainer');
+                if (group) group.style.display = 'none';
+                if (container) container.innerHTML = '';
+            }
+        });
     } catch (err) {
         console.error('loadClasses error:', err);
         select.innerHTML = '<option value="">Could not load classes — check connection</option>';
+    }
+}
+
+async function loadSubjectsForClass(className) {
+    const group = document.getElementById('subjectsGroup');
+    const container = document.getElementById('subjectsContainer');
+    if (!group || !container) return;
+
+    container.innerHTML = '<span style="color:var(--text-light,#6b7280);font-size:0.9rem;">Loading courses...</span>';
+    group.style.display = 'block';
+
+    try {
+        const response = await fetch('/api/courses');
+        if (!response.ok) throw new Error('Failed to load courses');
+        const courses = await response.json();
+
+        const subjects = [...new Set(
+            courses
+                .filter(c => c && c.class === className && c.subject)
+                .map(c => c.subject)
+        )].sort();
+
+        if (subjects.length === 0) {
+            container.innerHTML = '<span style="color:var(--text-light,#6b7280);font-size:0.9rem;">No courses found for this class</span>';
+            return;
+        }
+
+        container.innerHTML = '';
+        subjects.forEach(subject => {
+            const label = document.createElement('label');
+            label.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--border-color,#e5e7eb);border-radius:6px;cursor:pointer;font-size:0.85rem;background:var(--card-bg,#fff);';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.name = 'subjects';
+            cb.value = subject;
+            cb.style.accentColor = 'var(--primary-color,#2563eb)';
+            label.appendChild(cb);
+            label.appendChild(document.createTextNode(' ' + subject));
+            container.appendChild(label);
+        });
+    } catch (err) {
+        console.error('loadSubjectsForClass error:', err);
+        container.innerHTML = '<span style="color:#dc2626;font-size:0.9rem;">Could not load subjects</span>';
     }
 }
 
