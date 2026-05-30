@@ -172,13 +172,16 @@ async function loadClasses() {
         classes = getData('lms_classes') || [];
     }
     
+    const totalClassesEl = document.getElementById('totalClasses');
+    if (totalClassesEl) totalClassesEl.textContent = classes.length;
+
     if (classes.length === 0) {
         tbody.innerHTML = '<tr><td colspan="3" style="text-align: center;">No classes added yet</td></tr>';
         return;
     }
-    
+
     tbody.innerHTML = '';
-    
+
     classes.forEach(cls => {
         if (!cls || !cls.id || !cls.name) return; // Skip invalid entries
         const row = document.createElement('tr');
@@ -254,8 +257,11 @@ async function loadCourses() {
         });
     }
     
+    const totalCoursesEl = document.getElementById('totalCourses');
+    if (totalCoursesEl) totalCoursesEl.textContent = courses.length;
+
     if (!tbody) return;
-    
+
     if (courses.length === 0) {
         tbody.innerHTML = '<tr><td colspan="4" style="text-align: center;">No courses added yet</td></tr>';
         return;
@@ -299,7 +305,12 @@ async function loadUsers() {
     } else {
         users = getData('lms_users') || { students: [], lecturers: [] };
     }
-    
+
+    const totalStudentsEl = document.getElementById('totalStudents');
+    const totalLecturersEl = document.getElementById('totalLecturers');
+    if (totalStudentsEl) totalStudentsEl.textContent = users.students ? users.students.length : 0;
+    if (totalLecturersEl) totalLecturersEl.textContent = users.lecturers ? users.lecturers.length : 0;
+
     // Load students
     if (studentsTbody) {
         if (!users.students || users.students.length === 0) {
@@ -2119,13 +2130,16 @@ async function loadExams() {
         users = getData('lms_users') || { lecturers: [] };
     }
     
+    const totalExamsEl = document.getElementById('totalExams');
+    if (totalExamsEl) totalExamsEl.textContent = exams.length;
+
     if (exams.length === 0) {
         tbody.innerHTML = '<tr><td colspan="10" style="text-align: center;">No exams found</td></tr>';
         return;
     }
-    
+
     tbody.innerHTML = '';
-    
+
     exams.forEach(exam => {
         if (!exam || !exam.id) return;
         
@@ -2861,32 +2875,17 @@ function performImportData(file) {
     event.target.value = '';
 };
 
-// Update Dashboard Statistics
-function updateDashboardStats() {
-    const materials = getData('lms_materials') || [];
-    const announcements = getData('lms_announcements') || [];
-    const exams = getData('lms_exams') || [];
-    const releases = getData('lms_result_releases') || {};
-    
-    const now = new Date();
-    const activeExams = exams.filter(e => {
-        if (!e || !e.startTime) return false;
-        const startTime = new Date(e.startTime);
-        const endTime = new Date(startTime.getTime() + (e.duration || 0) * 60 * 1000);
-        return now >= startTime && now <= endTime;
-    }).length;
-    
-    const releasedCount = Object.values(releases).filter(r => r === true).length;
-    
-    const totalMaterialsEl = document.getElementById('totalMaterials');
-    const totalAnnouncementsEl = document.getElementById('totalAnnouncements');
-    const activeExamsEl = document.getElementById('activeExams');
-    const releasedResultsEl = document.getElementById('releasedResults');
-    
-    if (totalMaterialsEl) totalMaterialsEl.textContent = materials.length;
-    if (totalAnnouncementsEl) totalAnnouncementsEl.textContent = announcements.length;
-    if (activeExamsEl) activeExamsEl.textContent = activeExams;
-    if (releasedResultsEl) releasedResultsEl.textContent = releasedCount;
+// Update Dashboard Statistics — fetches results count live from the API
+async function updateDashboardStats() {
+    try {
+        if (typeof getResults !== 'function') return;
+        invalidateCache('results');
+        const results = await getResults();
+        const totalResultsEl = document.getElementById('totalResults');
+        if (totalResultsEl) totalResultsEl.textContent = Array.isArray(results) ? results.length : 0;
+    } catch (error) {
+        console.error('Error updating dashboard stats:', error);
+    }
 }
 
 // Table Sorting Functionality
