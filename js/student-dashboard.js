@@ -1776,12 +1776,23 @@ window.submitExam = async function() {
         submittedAt: new Date().toISOString()
     };
     
-    // Save to Supabase or localStorage
+    // Save to Supabase with retry, fall back to localStorage only if all retries fail
     if (typeof saveResult === 'function') {
-        try {
-            await saveResult(result);
-        } catch (error) {
-            console.warn('Supabase saveResult failed, using localStorage:', error);
+        let saved = false;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                await saveResult(result);
+                saved = true;
+                break;
+            } catch (error) {
+                console.warn(`saveResult attempt ${attempt}/3 failed:`, error);
+                if (attempt < 3) {
+                    await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+                }
+            }
+        }
+        if (!saved) {
+            console.error('All saveResult retries failed — saving to localStorage as backup');
             const results = getData('lms_results') || [];
             results.push(result);
             saveData('lms_results', results);
