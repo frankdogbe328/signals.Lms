@@ -1776,7 +1776,8 @@ window.submitExam = async function() {
         submittedAt: new Date().toISOString()
     };
     
-    // Save to Supabase with retry, fall back to localStorage only if all retries fail
+    // Save to Supabase with retry + jitter, fall back to localStorage only if all retries fail.
+    // Jitter prevents 150 simultaneous failures from all retrying at exactly the same instant.
     if (typeof saveResult === 'function') {
         let saved = false;
         for (let attempt = 1; attempt <= 3; attempt++) {
@@ -1787,7 +1788,8 @@ window.submitExam = async function() {
             } catch (error) {
                 console.warn(`saveResult attempt ${attempt}/3 failed:`, error);
                 if (attempt < 3) {
-                    await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+                    const backoffMs = attempt * 1000 + Math.floor(Math.random() * 1500);
+                    await new Promise(resolve => setTimeout(resolve, backoffMs));
                 }
             }
         }

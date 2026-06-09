@@ -11,6 +11,7 @@ export function getDb() {
             max: 10,
             idleTimeoutMillis: 30000,
             connectionTimeoutMillis: 5000,
+            statement_timeout: 10000,
         });
     }
     return pool;

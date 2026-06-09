@@ -961,17 +961,11 @@ function disableExamSecurity() {
         warningDiv.remove();
     }
     
-    // Log exam end
-    if (typeof window.logAction === 'function' && examSecurity.examId) {
-        window.logAction('EXAM_END', `Finished exam: ${examSecurity.examTitle} (${examSecurity.examId})`, { 
-            examId: examSecurity.examId, 
-            endTime: new Date().toISOString() 
-        });
-        
-        // Clear exam context
-        examSecurity.examId = null;
-        examSecurity.examTitle = null;
-    }
+    // EXAM_END audit log skipped intentionally — submittedAt on the result record
+    // is the authoritative end-time. Removing this saves 1 DB write per submission
+    // (150 fewer writes during 150-student submission storms).
+    examSecurity.examId = null;
+    examSecurity.examTitle = null;
 }
 
 // Get proctoring report
