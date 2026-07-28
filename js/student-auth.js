@@ -45,7 +45,7 @@ function setupLogin() {
         const password = document.getElementById('password').value;
         
         if (!username || !password) {
-            showAlert('Please enter both username and password', 'error');
+            showAlert('Please enter both index number and password', 'error');
             return;
         }
 
@@ -57,7 +57,7 @@ function setupLogin() {
             });
             const data = await res.json();
             if (!res.ok) {
-                showAlert(data.error || 'Invalid username or password', 'error');
+                showAlert(data.error || 'Invalid index number or password', 'error');
                 return;
             }
             if (typeof window.setApiToken === 'function') window.setApiToken(data.token);
@@ -286,7 +286,7 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Validation
             if (!username) {
-                alertContainer.innerHTML = '<div class="alert alert-error">Please enter your username or email</div>';
+                alertContainer.innerHTML = '<div class="alert alert-error">Please enter your index number</div>';
                 return;
             }
             
@@ -322,7 +322,7 @@ document.addEventListener('DOMContentLoaded', function() {
             );
             
             if (!student) {
-                alertContainer.innerHTML = '<div class="alert alert-error">User not found. Please check your username or email.</div>';
+                alertContainer.innerHTML = '<div class="alert alert-error">Student not found. Please check your index number.</div>';
                 return;
             }
             
