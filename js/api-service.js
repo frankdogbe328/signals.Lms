@@ -286,7 +286,8 @@ async function saveUser(user) {
             className: user.class || (user.classes && user.classes[0]),
             classes: user.classes || [],
             subjects: user.subjects || [],
-            registrationKey: user.registrationKey
+            registrationKey: user.registrationKey,
+            canPrintResults: user.canPrintResults ?? user.can_print_results
         })
     });
     invalidateCache('users');
@@ -307,7 +308,7 @@ async function updateUser(userId, userType, userData) {
                 classes: userData.classes,
                 password: userData.password,
                 className: userData.class,
-                canPrintResults: userData.canPrintResults
+                canPrintResults: userData.canPrintResults ?? userData.can_print_results
             })
         });
         invalidateCache('users');
@@ -321,7 +322,7 @@ async function updateUser(userId, userType, userData) {
         return result;
     } catch (e) {
         console.error('updateUser error:', e);
-        return null;
+        throw e;
     }
 }
 

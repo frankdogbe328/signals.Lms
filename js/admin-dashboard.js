@@ -1834,15 +1834,15 @@ window.runBulkCourseImport = async function() {
 };
 
 // User Management
-window.showAddUserModal = function(userType) {
+window.showAddUserModal = async function(userType) {
     const modal = document.getElementById('addUserModal');
     const title = document.getElementById('addUserModalTitle');
     const form = document.getElementById('addUserForm');
-    
+
     document.getElementById('addUserType').value = userType;
     document.getElementById('addUserId').value = '';
     form.reset();
-    
+
     if (userType === 'student') {
         title.textContent = 'Add Student';
         document.getElementById('addUserClassGroup').style.display = 'block';
@@ -1850,11 +1850,23 @@ window.showAddUserModal = function(userType) {
         document.getElementById('addUserSubjectsGroup').style.display = 'none';
         document.getElementById('addUserLecturerClassesGroup').style.display = 'none';
         document.getElementById('addUserCanPrint').checked = false;
-        
-        // Populate class dropdown
+
         const classSelect = document.getElementById('addUserClass');
+        classSelect.innerHTML = '<option value="">-- Loading Classes --</option>';
+
+        let classes = [];
+        if (typeof getClasses === 'function') {
+            try {
+                classes = await getClasses();
+            } catch (err) {
+                console.warn('getClasses failed, falling back to localStorage:', err);
+                classes = getData('lms_classes') || [];
+            }
+        } else {
+            classes = getData('lms_classes') || [];
+        }
+
         classSelect.innerHTML = '<option value="">-- Select Class --</option>';
-        const classes = getData('lms_classes') || [];
         const sortedClasses = [...classes].filter(cls => cls && cls.name).sort((a, b) => {
             return (a.name || '').localeCompare(b.name || '');
         });
@@ -2651,31 +2663,51 @@ async function performDeleteAnnouncement(announcementId) {
     }
 }
 
-window.toggleAnnouncementClasses = function() {
+window.toggleAnnouncementClasses = async function() {
     const target = document.getElementById('addAnnouncementTarget').value;
     const classesGroup = document.getElementById('addAnnouncementClassesGroup');
     const container = document.getElementById('addAnnouncementClassesContainer');
-    
-    if (target === 'class') {
-        classesGroup.style.display = 'block';
-        container.innerHTML = '';
-        const classes = getData('lms_classes') || [];
-        const sortedClasses = [...classes].filter(cls => cls && cls.name).sort((a, b) => {
-            return (a.name || '').localeCompare(b.name || '');
-        });
-        sortedClasses.forEach(cls => {
-            const checkboxItem = document.createElement('div');
-            checkboxItem.className = 'checkbox-item';
-            const id = cls.name.replace(/\s+/g, '_');
-            checkboxItem.innerHTML = `
-                <input type="checkbox" id="announcement_class_${id}" value="${cls.name}">
-                <label for="announcement_class_${id}">${cls.name}</label>
-            `;
-            container.appendChild(checkboxItem);
-        });
-    } else {
+
+    if (target !== 'class') {
         classesGroup.style.display = 'none';
+        return;
     }
+
+    classesGroup.style.display = 'block';
+    container.innerHTML = '<div style="color:var(--text-light,#6b7280);font-size:0.9rem;">Loading classes...</div>';
+
+    let classes = [];
+    if (typeof getClasses === 'function') {
+        try {
+            classes = await getClasses();
+        } catch (err) {
+            console.warn('getClasses failed, falling back to localStorage:', err);
+            classes = getData('lms_classes') || [];
+        }
+    } else {
+        classes = getData('lms_classes') || [];
+    }
+
+    container.innerHTML = '';
+    const sortedClasses = [...classes].filter(cls => cls && cls.name).sort((a, b) => {
+        return (a.name || '').localeCompare(b.name || '');
+    });
+
+    if (sortedClasses.length === 0) {
+        container.innerHTML = '<div style="color:#dc2626;font-size:0.9rem;">No classes found — create a class first under the Classes tab.</div>';
+        return;
+    }
+
+    sortedClasses.forEach(cls => {
+        const checkboxItem = document.createElement('div');
+        checkboxItem.className = 'checkbox-item';
+        const id = cls.name.replace(/\s+/g, '_');
+        checkboxItem.innerHTML = `
+            <input type="checkbox" id="announcement_class_${id}" value="${cls.name}">
+            <label for="announcement_class_${id}">${cls.name}</label>
+        `;
+        container.appendChild(checkboxItem);
+    });
 };
 
 function setupAnnouncementForm() {

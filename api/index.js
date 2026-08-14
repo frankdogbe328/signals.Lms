@@ -58,7 +58,7 @@ export default async function handler(req, res) {
             }
 
             if (seg1 === 'register') {
-                const { username, password, fullName, email, telephone, type, rank, className, classes, subjects, registrationKey } = req.body;
+                const { username, password, fullName, email, telephone, type, rank, className, classes, subjects, registrationKey, canPrintResults } = req.body;
                 if (!username || !password || !type) return res.status(400).json({ error: 'Missing required fields' });
                 const { rows: ex } = await db.query('SELECT id FROM users WHERE username = $1', [username]);
                 if (ex.length) return res.status(409).json({ error: 'Username already exists' });
@@ -73,15 +73,15 @@ export default async function handler(req, res) {
                 }
                 let classId = null;
                 if (className) {
-                    const { rows: cl } = await db.query('SELECT id FROM classes WHERE name = $1', [className]);
+                    const { rows: cl } = await db.query('SELECT id FROM classes WHERE name = $1', [String(className).trim()]);
                     classId = cl[0]?.id || null;
                 }
                 const passwordHash = await bcrypt.hash(password, 10);
                 const classesArr = (classes && classes.length) ? classes : (className ? [className] : []);
                 const { rows } = await db.query(
-                    `INSERT INTO users (username,password_hash,full_name,email,telephone,type,rank,class_id,subjects,classes)
-                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,username,full_name,email,type`,
-                    [username, passwordHash, fullName, email, telephone, type, rank, classId, subjects || [], classesArr]
+                    `INSERT INTO users (username,password_hash,full_name,email,telephone,type,rank,class_id,subjects,classes,can_print_results)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id,username,full_name,email,type`,
+                    [username, passwordHash, fullName, email, telephone, type, rank, classId, subjects || [], classesArr, canPrintResults === true]
                 );
                 return res.status(201).json({ user: rows[0] });
             }
@@ -547,13 +547,21 @@ export default async function handler(req, res) {
                         );
                         const ann = rows[0];
                         if (targetClasses?.length) {
+                            const missing = [];
                             for (const name of targetClasses) {
-                                const { rows: cl } = await client.query('SELECT id FROM classes WHERE name = $1', [name]);
-                                if (cl[0]) await client.query(
-                                    'INSERT INTO announcement_classes (announcement_id, class_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
-                                    [ann.id, cl[0].id]
-                                );
+                                const trimmed = String(name || '').trim();
+                                if (!trimmed) continue;
+                                const { rows: cl } = await client.query('SELECT id FROM classes WHERE name = $1', [trimmed]);
+                                if (cl[0]) {
+                                    await client.query(
+                                        'INSERT INTO announcement_classes (announcement_id, class_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+                                        [ann.id, cl[0].id]
+                                    );
+                                } else {
+                                    missing.push(trimmed);
+                                }
                             }
+                            if (missing.length) console.warn('Announcement targeted unknown classes (ignored):', missing);
                         }
                         await client.query('COMMIT');
                         return res.status(201).json({ ...ann, classes: targetClasses || [] });
