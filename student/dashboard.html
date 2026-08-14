@@ -6,6 +6,21 @@
     <title>Student Dashboard - Signals School LMS</title>
     <link rel="icon" type="image/jpeg" href="../logo.jpeg">
     <link rel="stylesheet" href="../css/style.css">
+    <style>
+        .tab-btn.has-unread { position: relative; }
+        .tab-btn.has-unread::after {
+            content: '';
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #dc2626;
+            border: 2px solid var(--card-bg, #fff);
+            box-shadow: 0 0 0 1px #dc2626;
+        }
+    </style>
 </head>
 <body>
     <div id="background-carousel" data-img-path="../"></div>
@@ -260,7 +275,65 @@
             if (section === 'assignments' && typeof loadStudentAssignments === 'function') {
                 setTimeout(() => loadStudentAssignments(), 100);
             }
+
+            if (typeof markSectionSeen === 'function') markSectionSeen(section);
         };
+
+        // ── Unread badges ──────────────────────────────────────────────
+        window.markSectionSeen = function(section) {
+            if (section === 'announcements' || section === 'results') {
+                localStorage.setItem(`lms_last_seen_${section}`, new Date().toISOString());
+                const btn = document.querySelector(`.tab-btn[onclick*="showSection('${section}'"]`);
+                if (btn) btn.classList.remove('has-unread');
+            }
+        };
+
+        window.refreshUnreadBadges = async function() {
+            try {
+                const user = typeof getCurrentUser === 'function' ? getCurrentUser() : null;
+                if (!user) return;
+
+                const lastSeenAnn = new Date(localStorage.getItem('lms_last_seen_announcements') || 0);
+                const lastSeenRes = new Date(localStorage.getItem('lms_last_seen_results') || 0);
+
+                let announcements = [];
+                try { announcements = typeof getAnnouncements === 'function' ? (await getAnnouncements() || []) : []; } catch {}
+
+                let userClass = user.class;
+                if (Array.isArray(userClass)) userClass = userClass[0];
+                if (!userClass && Array.isArray(user.classes)) userClass = user.classes[0];
+                userClass = String(userClass || '').trim();
+
+                const hasUnreadAnn = announcements.some(a => {
+                    if (!a || !a.createdAt) return false;
+                    if (new Date(a.createdAt) <= lastSeenAnn) return false;
+                    const type = (a.type || a.target || '').toLowerCase();
+                    if (['all', 'general', 'students', ''].includes(type)) return true;
+                    const targets = a.targetClasses || a.classes || [];
+                    return userClass && targets.includes(userClass);
+                });
+
+                let results = [];
+                try { results = typeof getResults === 'function' ? (await getResults() || []) : []; } catch {}
+                const hasUnreadRes = results.some(r => {
+                    if (!r || r.studentId !== user.id) return false;
+                    if (!r.isReleased) return false;
+                    return new Date(r.submittedAt || 0) > lastSeenRes;
+                });
+
+                const annBtn = document.querySelector('.tab-btn[onclick*="showSection(\'announcements\'"]');
+                const resBtn = document.querySelector('.tab-btn[onclick*="showSection(\'results\'"]');
+                if (annBtn) annBtn.classList.toggle('has-unread', hasUnreadAnn);
+                if (resBtn) resBtn.classList.toggle('has-unread', hasUnreadRes);
+            } catch (err) {
+                console.warn('refreshUnreadBadges failed:', err);
+            }
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            setTimeout(() => { if (typeof refreshUnreadBadges === 'function') refreshUnreadBadges(); }, 1500);
+            setInterval(() => { if (typeof refreshUnreadBadges === 'function') refreshUnreadBadges(); }, 60_000);
+        });
     </script>
     <script src="../js/student-dashboard.js" defer></script>
     <script src="../js/student-announcements.js" defer></script>

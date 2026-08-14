@@ -1188,6 +1188,101 @@ window.handleDeleteRegistrationKey = async function(keyToDelete) {
     }
 };
 
+function csvEscape(val) {
+    if (val === null || val === undefined) return '';
+    const s = String(val);
+    if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+}
+
+function downloadCsv(filename, rows) {
+    if (!rows.length) {
+        showAlert('results', 'Nothing to export — no rows found.', 'error');
+        return;
+    }
+    const headers = Object.keys(rows[0]);
+    const lines = [headers.join(',')];
+    for (const row of rows) {
+        lines.push(headers.map(h => csvEscape(row[h])).join(','));
+    }
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+window.exportResultsCSV = async function() {
+    try {
+        showAlert('results', 'Preparing CSV export...', 'success');
+        const results = typeof getResults === 'function' ? await getResults() : [];
+        if (!results.length) return showAlert('results', 'No results to export.', 'error');
+
+        const rows = results.map(r => ({
+            student_id: r.studentId || '',
+            student_name: r.studentName || '',
+            exam_title: r.examTitle || '',
+            subject: r.subject || '',
+            type: r.type || '',
+            score: r.score ?? '',
+            correct_answers: r.correctAnswers ?? '',
+            total_questions: r.totalQuestions ?? '',
+            submitted_at: r.submittedAt || '',
+            is_released: r.isReleased ? 'yes' : 'no',
+            is_written: r.isWritten ? 'yes' : 'no'
+        }));
+        const stamp = new Date().toISOString().slice(0, 10);
+        downloadCsv(`signals-lms-results-${stamp}.csv`, rows);
+        if (typeof logAction === 'function') logAction('EXPORT_RESULTS_CSV', `Exported ${rows.length} results to CSV`, { count: rows.length });
+    } catch (err) {
+        console.error('exportResultsCSV failed:', err);
+        showAlert('results', 'Export failed: ' + (err.message || 'Unknown error'), 'error');
+    }
+};
+
+window.exportWrittenMarksCSV = async function() {
+    try {
+        showAlert('results', 'Preparing CSV export...', 'success');
+        const marks = typeof getWrittenMarks === 'function' ? await getWrittenMarks() : {};
+        const users = typeof getUsers === 'function' ? await getUsers() : { students: [] };
+        const studentMap = {};
+        (users.students || []).forEach(s => { studentMap[s.id] = s; });
+
+        const rows = [];
+        for (const [key, byType] of Object.entries(marks || {})) {
+            const [subjectOrGeneral, ...classParts] = key.split('_');
+            const className = classParts.join('_');
+            const subject = subjectOrGeneral === 'general' ? '' : subjectOrGeneral;
+            for (const [examType, byStudent] of Object.entries(byType || {})) {
+                for (const [studentId, mark] of Object.entries(byStudent || {})) {
+                    const s = studentMap[studentId] || {};
+                    rows.push({
+                        student_id: studentId,
+                        student_name: s.fullName || s.full_name || '',
+                        student_username: s.username || '',
+                        class: className,
+                        subject: subject,
+                        exam_type: examType,
+                        mark: mark
+                    });
+                }
+            }
+        }
+
+        if (!rows.length) return showAlert('results', 'No written marks to export.', 'error');
+        const stamp = new Date().toISOString().slice(0, 10);
+        downloadCsv(`signals-lms-written-marks-${stamp}.csv`, rows);
+        if (typeof logAction === 'function') logAction('EXPORT_MARKS_CSV', `Exported ${rows.length} written marks to CSV`, { count: rows.length });
+    } catch (err) {
+        console.error('exportWrittenMarksCSV failed:', err);
+        showAlert('results', 'Export failed: ' + (err.message || 'Unknown error'), 'error');
+    }
+};
+
 window.loadSystemStatus = async function() {
     const display = document.getElementById('system-status-display');
     if (!display) return;
