@@ -81,9 +81,17 @@ function loginRateLimitExceeded(req) {
 export default async function handler(req, res) {
     if (cors(req, res)) return;
 
+    // Resolve segments from any of:
+    //  1. Vercel catch-all: req.query.path = ['seg0', 'seg1', ...]
+    //  2. Legacy vercel.json rewrite: req.query.p0='seg0', req.query.p1='seg1'
+    //  3. Fallback URL parsing of req.url
+    let segments = [];
     const raw = req.query.path;
-    let segments = Array.isArray(raw) ? raw : (raw ? [raw] : []);
-    // Fallback: extract path from req.url when catch-all query param is missing
+    if (Array.isArray(raw)) segments = raw;
+    else if (raw) segments = [raw];
+    if (segments.length === 0 && (req.query.p0 || req.query.p1)) {
+        segments = [req.query.p0, req.query.p1].filter(Boolean);
+    }
     if (segments.length === 0 && req.url) {
         const urlPath = req.url.split('?')[0];
         const parts = urlPath.split('/').filter(Boolean);
