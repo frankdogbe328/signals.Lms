@@ -623,10 +623,11 @@ async function saveWrittenMark(subject, className, examType, studentId, mark) {
 }
 
 async function saveRegistrationKey(key) {
+    const keyStr = typeof key === 'string' ? key : (key && key.key ? key.key : String(key));
     try {
         const result = await apiFetch('/api/registration-keys', {
             method: 'POST',
-            body: JSON.stringify({ key })
+            body: JSON.stringify({ key: keyStr })
         });
         invalidateCache('registration_keys');
         return result;
@@ -637,10 +638,11 @@ async function saveRegistrationKey(key) {
 }
 
 async function deleteRegistrationKey(key) {
+    const keyStr = typeof key === 'string' ? key : (key && key.key ? key.key : String(key));
     try {
         await apiFetch('/api/registration-keys', {
             method: 'DELETE',
-            body: JSON.stringify({ key })
+            body: JSON.stringify({ key: keyStr })
         });
         invalidateCache('registration_keys');
         return true;
