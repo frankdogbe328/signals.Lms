@@ -187,3 +187,20 @@ CREATE TABLE IF NOT EXISTS registration_keys (
 INSERT INTO users (username, password_hash, full_name, type)
 VALUES ('admin', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'System Administrator', 'admin')
 ON CONFLICT (username) DO NOTHING;
+
+-- Indexes on hot query paths
+CREATE INDEX IF NOT EXISTS idx_users_type ON users(type);
+CREATE INDEX IF NOT EXISTS idx_users_class_id ON users(class_id);
+CREATE INDEX IF NOT EXISTS idx_results_exam_student ON results(exam_id, student_id);
+CREATE INDEX IF NOT EXISTS idx_results_student ON results(student_id);
+CREATE INDEX IF NOT EXISTS idx_results_submitted_at ON results(submitted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, read);
+CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_announcements_created_at ON announcements(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_announcement_classes_class ON announcement_classes(class_id);
+CREATE INDEX IF NOT EXISTS idx_exam_classes_class ON exam_classes(class_id);
+CREATE INDEX IF NOT EXISTS idx_exam_questions_exam ON exam_questions(exam_id);
+CREATE INDEX IF NOT EXISTS idx_courses_class ON courses(class_id);
+CREATE INDEX IF NOT EXISTS idx_materials_class ON materials(class_id);
+CREATE INDEX IF NOT EXISTS idx_written_marks_student ON written_marks(student_id);
