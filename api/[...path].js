@@ -28,6 +28,47 @@ export default async function handler(req, res) {
             return res.json({ ok: true, ts: Date.now() });
         }
 
+        // ── CLEANUP (retention pruning) ─────────────────────────────────────
+        if (seg0 === 'cleanup') {
+            if (req.method !== 'POST' && req.method !== 'GET') {
+                return res.status(405).json({ error: 'Method not allowed' });
+            }
+            const isVercelCron = req.headers['x-vercel-cron'] === '1'
+                || (process.env.CRON_SECRET && req.headers['authorization'] === `Bearer ${process.env.CRON_SECRET}`);
+            let isAdmin = false;
+            if (!isVercelCron) {
+                const caller = verifyToken(req);
+                isAdmin = caller && caller.type === 'admin';
+                if (!isAdmin) return res.status(401).json({ error: 'Unauthorized' });
+            }
+
+            const summary = {};
+            const runQuery = async (label, sql) => {
+                try {
+                    const { rowCount } = await db.query(sql);
+                    summary[label] = rowCount || 0;
+                } catch (err) {
+                    console.error(`Cleanup ${label} failed:`, err.message);
+                    summary[label] = { error: err.message };
+                }
+            };
+
+            await runQuery('audit_logs', `DELETE FROM audit_logs WHERE created_at < NOW() - INTERVAL '30 days'`);
+            await runQuery('notifications_read', `DELETE FROM notifications WHERE read = true AND created_at < NOW() - INTERVAL '14 days'`);
+            await runQuery('notifications_stale', `DELETE FROM notifications WHERE created_at < NOW() - INTERVAL '60 days'`);
+            await runQuery('announcements', `DELETE FROM announcements WHERE created_at < NOW() - INTERVAL '90 days'`);
+            await runQuery('registration_keys', `DELETE FROM registration_keys WHERE created_at < NOW() - INTERVAL '30 days'`);
+            await runQuery('exam_questions', `
+                DELETE FROM exam_questions WHERE exam_id IN (
+                    SELECT e.id FROM exams e
+                    WHERE e.created_at < NOW() - INTERVAL '30 days'
+                      AND EXISTS (SELECT 1 FROM results r WHERE r.exam_id = e.id)
+                )
+            `);
+
+            return res.json({ ok: true, ranAt: new Date().toISOString(), deleted: summary });
+        }
+
         // ── AUTH ─────────────────────────────────────────────────────────────
         if (seg0 === 'auth') {
             if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -58,26 +99,30 @@ export default async function handler(req, res) {
             }
 
             if (seg1 === 'register') {
-                const { username, password, fullName, email, telephone, type, rank, className, classes, subjects, registrationKey } = req.body;
+                const { username, password, fullName, email, telephone, type, rank, className, classes, subjects, registrationKey, canPrintResults } = req.body;
                 if (!username || !password || !type) return res.status(400).json({ error: 'Missing required fields' });
                 const { rows: ex } = await db.query('SELECT id FROM users WHERE username = $1', [username]);
                 if (ex.length) return res.status(409).json({ error: 'Username already exists' });
                 if (type === 'lecturer') {
-                    if (!registrationKey) return res.status(400).json({ error: 'Registration key required for lecturers' });
-                    const { rows: keys } = await db.query('SELECT id FROM registration_keys WHERE key = $1', [registrationKey]);
-                    if (!keys.length) return res.status(401).json({ error: 'Invalid registration key' });
+                    const caller = verifyToken(req);
+                    const isAdminCaller = caller && caller.type === 'admin';
+                    if (!isAdminCaller) {
+                        if (!registrationKey) return res.status(400).json({ error: 'Registration key required for lecturers' });
+                        const { rows: keys } = await db.query('SELECT id FROM registration_keys WHERE key = $1', [registrationKey]);
+                        if (!keys.length) return res.status(401).json({ error: 'Invalid registration key' });
+                    }
                 }
                 let classId = null;
                 if (className) {
-                    const { rows: cl } = await db.query('SELECT id FROM classes WHERE name = $1', [className]);
+                    const { rows: cl } = await db.query('SELECT id FROM classes WHERE name = $1', [String(className).trim()]);
                     classId = cl[0]?.id || null;
                 }
                 const passwordHash = await bcrypt.hash(password, 10);
                 const classesArr = (classes && classes.length) ? classes : (className ? [className] : []);
                 const { rows } = await db.query(
-                    `INSERT INTO users (username,password_hash,full_name,email,telephone,type,rank,class_id,subjects,classes)
-                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,username,full_name,email,type`,
-                    [username, passwordHash, fullName, email, telephone, type, rank, classId, subjects || [], classesArr]
+                    `INSERT INTO users (username,password_hash,full_name,email,telephone,type,rank,class_id,subjects,classes,can_print_results)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id,username,full_name,email,type`,
+                    [username, passwordHash, fullName, email, telephone, type, rank, classId, subjects || [], classesArr, canPrintResults === true]
                 );
                 return res.status(201).json({ user: rows[0] });
             }
@@ -543,13 +588,21 @@ export default async function handler(req, res) {
                         );
                         const ann = rows[0];
                         if (targetClasses?.length) {
+                            const missing = [];
                             for (const name of targetClasses) {
-                                const { rows: cl } = await client.query('SELECT id FROM classes WHERE name = $1', [name]);
-                                if (cl[0]) await client.query(
-                                    'INSERT INTO announcement_classes (announcement_id, class_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
-                                    [ann.id, cl[0].id]
-                                );
+                                const trimmed = String(name || '').trim();
+                                if (!trimmed) continue;
+                                const { rows: cl } = await client.query('SELECT id FROM classes WHERE name = $1', [trimmed]);
+                                if (cl[0]) {
+                                    await client.query(
+                                        'INSERT INTO announcement_classes (announcement_id, class_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+                                        [ann.id, cl[0].id]
+                                    );
+                                } else {
+                                    missing.push(trimmed);
+                                }
                             }
+                            if (missing.length) console.warn('Announcement targeted unknown classes (ignored):', missing);
                         }
                         await client.query('COMMIT');
                         return res.status(201).json({ ...ann, classes: targetClasses || [] });
@@ -674,7 +727,7 @@ export default async function handler(req, res) {
                 const { key } = req.body;
                 if (!key) return res.status(400).json({ error: 'Key required' });
                 const { rows } = await db.query(
-                    'INSERT INTO registration_keys (key) VALUES ($1) ON CONFLICT DO NOTHING RETURNING *',
+                    'INSERT INTO registration_keys (key) VALUES ($1) ON CONFLICT (key) DO UPDATE SET key = EXCLUDED.key RETURNING *',
                     [key]
                 );
                 return res.status(201).json(rows[0]);

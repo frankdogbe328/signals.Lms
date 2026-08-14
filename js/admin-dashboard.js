@@ -1199,13 +1199,26 @@ window.runCleanupNow = async function() {
 
     try {
         const token = typeof window.getApiToken === 'function' ? window.getApiToken() : localStorage.getItem('lms_api_token');
+        if (!token) {
+            throw new Error('You are not logged in. Please log out and log in again as admin.');
+        }
+
         const res = await fetch('/api/cleanup', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-            }
+                'Authorization': `Bearer ${token}`
+            },
+            body: '{}'
         });
+
+        if (res.status === 401) {
+            throw new Error('Your admin session expired. Please log out and log in again.');
+        }
+        if (res.status === 404) {
+            throw new Error('Cleanup endpoint not found — Vercel may still be redeploying. Try again in a minute.');
+        }
+
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `Cleanup failed (${res.status})`);
 
