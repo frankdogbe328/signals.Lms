@@ -4,6 +4,53 @@ import { cors } from './_cors.js';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 
+// Send an email via Resend to every student that has a result for the given
+// exam. No-op if RESEND_API_KEY isn't configured. Errors are logged but do
+// not propagate — result release itself must succeed even if email fails.
+async function sendResultReleaseEmails(db, examId) {
+    const apiKey = process.env.RESEND_API_KEY;
+    const fromAddr = process.env.RESEND_FROM || 'Signals LMS <noreply@signals-lms.local>';
+    if (!apiKey) return;
+
+    const { rows: exRows } = await db.query('SELECT title, subject FROM exams WHERE id = $1', [examId]);
+    if (!exRows[0]) return;
+    const exam = exRows[0];
+
+    const { rows: recipients } = await db.query(`
+        SELECT DISTINCT u.email, u.full_name, r.score
+        FROM results r
+        JOIN users u ON u.id = r.student_id
+        WHERE r.exam_id = $1 AND u.email IS NOT NULL AND u.email <> ''
+    `, [examId]);
+
+    if (recipients.length === 0) return;
+    console.log(`Sending ${recipients.length} result-release email(s) for exam ${exam.title}`);
+
+    const results = await Promise.allSettled(recipients.map(r => fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            from: fromAddr,
+            to: [r.email],
+            subject: `Your result for "${exam.title}" is now available`,
+            html: `
+                <p>Hi ${r.full_name || 'there'},</p>
+                <p>Your result for <strong>${exam.title}</strong>${exam.subject ? ` (${exam.subject})` : ''} has been released.</p>
+                <p>You scored <strong>${parseFloat(r.score || 0).toFixed(1)}%</strong>. Log in to the student portal to see the full breakdown.</p>
+                <p>— Signals Training School</p>
+            `
+        })
+    }).then(async res => {
+        if (!res.ok) throw new Error(`Resend ${res.status}: ${await res.text()}`);
+    })));
+
+    const failures = results.filter(r => r.status === 'rejected').length;
+    if (failures) console.warn(`${failures} of ${recipients.length} result-release emails failed to send`);
+}
+
 // In-memory sliding-window rate limit for /auth/login.
 // Note: serverless functions on Vercel are per-instance, so this caps
 // per-instance not truly global — but any single attacker will usually
@@ -53,6 +100,41 @@ export default async function handler(req, res) {
         if (seg0 === 'ping') {
             await db.query('SELECT 1');
             return res.json({ ok: true, ts: Date.now() });
+        }
+
+        // ── BACKUP (admin-only full JSON dump of core tables) ───────────────
+        if (seg0 === 'backup') {
+            const caller = verifyToken(req);
+            const isAdmin = caller && caller.type === 'admin';
+            if (!isAdmin) return res.status(401).json({ error: 'Unauthorized' });
+
+            const backup = { generatedAt: new Date().toISOString(), version: 1 };
+            const dumpTable = async (name, sql) => {
+                try {
+                    const { rows } = await db.query(sql || `SELECT * FROM ${name}`);
+                    backup[name] = rows;
+                } catch (err) {
+                    backup[name] = { error: err.message };
+                }
+            };
+
+            await dumpTable('users');
+            await dumpTable('classes');
+            await dumpTable('courses');
+            await dumpTable('exams');
+            await dumpTable('exam_questions');
+            await dumpTable('exam_classes');
+            await dumpTable('results');
+            await dumpTable('materials');
+            await dumpTable('written_marks');
+            await dumpTable('result_releases');
+            await dumpTable('announcements');
+            await dumpTable('announcement_classes');
+            await dumpTable('registration_keys');
+
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Content-Disposition', `attachment; filename="signals-lms-backup-${new Date().toISOString().slice(0,10)}.json"`);
+            return res.status(200).send(JSON.stringify(backup, null, 2));
         }
 
         // ── HEALTH ──────────────────────────────────────────────────────────
@@ -553,6 +635,14 @@ export default async function handler(req, res) {
                      RETURNING *`,
                     [examId, isReleased, isReleased ? new Date().toISOString() : null]
                 );
+
+                // Fire-and-forget email notifications when results are being released.
+                // Silently skipped if RESEND_API_KEY isn't set.
+                if (isReleased && process.env.RESEND_API_KEY) {
+                    sendResultReleaseEmails(db, examId).catch(err =>
+                        console.error('Result-release email send failed:', err.message));
+                }
+
                 return res.json(rows[0]);
             }
             return res.status(405).json({ error: 'Method not allowed' });

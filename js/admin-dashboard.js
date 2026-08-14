@@ -1283,6 +1283,45 @@ window.exportWrittenMarksCSV = async function() {
     }
 };
 
+window.downloadFullBackup = async function() {
+    try {
+        const token = typeof window.getApiToken === 'function' ? window.getApiToken() : localStorage.getItem('lms_api_token');
+        if (!token) {
+            showAlert('settings', 'Not logged in — log out and log in again.', 'error');
+            return;
+        }
+        showAlert('settings', 'Preparing backup... this may take a moment for large DBs.', 'success');
+
+        const res = await fetch('/api/backup', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.status === 401) {
+            showAlert('settings', 'Session expired — log out and log in again.', 'error');
+            return;
+        }
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `Backup failed (${res.status})`);
+        }
+
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `signals-lms-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        showAlert('settings', 'Backup downloaded. Save it somewhere safe!', 'success');
+        if (typeof logAction === 'function') logAction('DB_BACKUP', 'Downloaded full DB backup', {});
+    } catch (err) {
+        console.error('downloadFullBackup failed:', err);
+        showAlert('settings', 'Backup failed: ' + (err.message || 'Unknown error'), 'error');
+    }
+};
+
 window.loadSystemStatus = async function() {
     const display = document.getElementById('system-status-display');
     if (!display) return;

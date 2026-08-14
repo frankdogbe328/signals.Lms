@@ -552,6 +552,14 @@
                 </div>
 
                 <div class="card" style="margin-bottom: 30px;">
+                    <h4>Full Database Backup</h4>
+                    <p>Download a JSON snapshot of every important table (users, classes, courses, exams, results, marks, materials, announcements). Save it somewhere safe — Drive, Dropbox, a USB stick. Do this weekly.</p>
+                    <div style="margin: 15px 0;">
+                        <button class="btn btn-primary" onclick="downloadFullBackup()">📦 Download Full Backup</button>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-bottom: 30px;">
                     <h4>Database Cleanup</h4>
                     <p>Prunes old rows to keep Neon storage lean. Runs automatically each night at 3am UTC; use this button to run it on demand.</p>
                     <ul style="color: var(--text-light); font-size: 0.9rem; margin-bottom: 15px;">
