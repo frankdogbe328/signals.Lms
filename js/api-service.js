@@ -352,11 +352,7 @@ async function saveClass(className) {
         return result;
     } catch (e) {
         console.error('saveClass error:', e);
-        const classes = getData('lms_classes') || [];
-        const newClass = { id: Date.now().toString(), name: className, createdAt: new Date().toISOString() };
-        classes.push(newClass);
-        saveData('lms_classes', classes);
-        return newClass;
+        throw e;
     }
 }
 
@@ -370,7 +366,7 @@ async function updateClass(classId, className) {
         return result;
     } catch (e) {
         console.error('updateClass error:', e);
-        return null;
+        throw e;
     }
 }
 
@@ -395,11 +391,7 @@ async function saveCourse(course) {
         return result;
     } catch (e) {
         console.error('saveCourse error:', e);
-        const courses = getData('lms_courses') || [];
-        const newCourse = { id: Date.now().toString(), ...course, createdAt: new Date().toISOString() };
-        courses.push(newCourse);
-        saveData('lms_courses', courses);
-        return newCourse;
+        throw e;
     }
 }
 
@@ -413,7 +405,7 @@ async function updateCourse(courseId, course) {
         return result;
     } catch (e) {
         console.error('updateCourse error:', e);
-        return null;
+        throw e;
     }
 }
 
@@ -439,15 +431,7 @@ async function saveExam(exam) {
         return result;
     } catch (e) {
         console.error('saveExam error:', e);
-        const exams = getData('lms_exams') || [];
-        if (exam.id) {
-            const idx = exams.findIndex(ex => ex.id === exam.id);
-            if (idx !== -1) exams[idx] = exam; else exams.push(exam);
-        } else {
-            exams.push(exam);
-        }
-        saveData('lms_exams', exams);
-        return exam;
+        throw e;
     }
 }
 
@@ -462,7 +446,7 @@ async function updateExam(examId, updates) {
         return result;
     } catch (e) {
         console.error('updateExam error:', e);
-        return null;
+        throw e;
     }
 }
 
@@ -518,9 +502,11 @@ async function setResultRelease(examId, isReleased) {
         });
     } catch (e) {
         console.error('setResultRelease error:', e);
-        return null;
+        throw e;
     }
 }
+
+const saveResultRelease = setResultRelease;
 
 async function saveMaterial(material) {
     try {
@@ -542,10 +528,7 @@ async function saveMaterial(material) {
         return result;
     } catch (e) {
         console.error('saveMaterial error:', e);
-        const materials = getData('lms_materials') || [];
-        materials.push({ id: Date.now().toString(), ...material, uploadedAt: new Date().toISOString() });
-        saveData('lms_materials', materials);
-        return material;
+        throw e;
     }
 }
 
@@ -576,7 +559,7 @@ async function saveAnnouncement(announcement) {
         return result;
     } catch (e) {
         console.error('saveAnnouncement error:', e);
-        return null;
+        throw e;
     }
 }
 
@@ -619,7 +602,7 @@ async function saveWrittenMark(subject, className, examType, studentId, mark) {
         });
     } catch (e) {
         console.error('saveWrittenMark error:', e);
-        return null;
+        throw e;
     }
 }
 
@@ -772,12 +755,14 @@ window.deleteExam = deleteExam;
 window.saveResult = saveResult;
 window.updateResult = updateResult;
 window.setResultRelease = setResultRelease;
+window.saveResultRelease = setResultRelease;
 window.saveMaterial = saveMaterial;
 window.deleteMaterial = deleteMaterial;
 window.saveAnnouncement = saveAnnouncement;
 window.deleteAnnouncement = deleteAnnouncement;
 window.saveNotification = saveNotification;
 window.saveWrittenMark = saveWrittenMark;
+window.apiSaveWrittenMark = saveWrittenMark;
 window.saveRegistrationKey = saveRegistrationKey;
 window.deleteRegistrationKey = deleteRegistrationKey;
 window.saveAssignment = saveAssignment;

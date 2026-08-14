@@ -686,7 +686,7 @@ export default async function handler(req, res) {
                 const { key } = req.body;
                 if (!key) return res.status(400).json({ error: 'Key required' });
                 const { rows } = await db.query(
-                    'INSERT INTO registration_keys (key) VALUES ($1) ON CONFLICT DO NOTHING RETURNING *',
+                    'INSERT INTO registration_keys (key) VALUES ($1) ON CONFLICT (key) DO UPDATE SET key = EXCLUDED.key RETURNING *',
                     [key]
                 );
                 return res.status(201).json(rows[0]);

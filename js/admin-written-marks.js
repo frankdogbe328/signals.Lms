@@ -325,58 +325,44 @@ window.saveWrittenMark = async function(type, subject, className, studentId, mar
     const writtenMarks = typeof getWrittenMarks === 'function' ? await getWrittenMarks() : (getData('lms_written_marks') || {});
     // Use class as key since these are general exams (no subject)
     const key = `general_${className}`;
-    
-    if (!writtenMarks[key]) {
-        writtenMarks[key] = {};
-    }
-    if (!writtenMarks[key][type]) {
-        writtenMarks[key][type] = {};
-    }
-    
-    // Allow empty value to clear the mark
-    if (mark === '' || mark === null || mark === undefined) {
-        delete writtenMarks[key][type][studentId];
-        // Use API service layer if available
-        if (typeof saveWrittenMarks === 'function') {
-            try {
-                await saveWrittenMarks(writtenMarks);
-            } catch (error) {
-                console.warn('Supabase saveWrittenMarks failed, using localStorage:', error);
-                saveData('lms_written_marks', writtenMarks);
+
+    if (!writtenMarks[key]) writtenMarks[key] = {};
+    if (!writtenMarks[key][type]) writtenMarks[key][type] = {};
+
+    const isClear = (mark === '' || mark === null || mark === undefined);
+    let markValue = null;
+
+    if (!isClear) {
+        markValue = parseFloat(mark);
+        if (isNaN(markValue) || markValue < 0 || markValue > 100) {
+            const statusEl = document.getElementById(`save-status-${type}-${studentId}`);
+            if (statusEl) {
+                statusEl.textContent = '✗ Invalid';
+                statusEl.style.color = 'var(--danger-color)';
+                statusEl.style.display = 'inline';
+                setTimeout(() => { statusEl.style.display = 'none'; }, 2000);
             }
-        } else {
-            saveData('lms_written_marks', writtenMarks);
+            return;
         }
-        const statusEl = document.getElementById(`save-status-${type}-${studentId}`);
-        if (statusEl) {
-            statusEl.style.display = 'none';
-        }
-        return;
+        writtenMarks[key][type][studentId] = markValue;
+    } else {
+        delete writtenMarks[key][type][studentId];
     }
-    
-    const markValue = parseFloat(mark);
-    if (isNaN(markValue) || markValue < 0 || markValue > 100) {
-        const statusEl = document.getElementById(`save-status-${type}-${studentId}`);
-        if (statusEl) {
-            statusEl.textContent = '✗ Invalid';
-            statusEl.style.color = 'var(--danger-color)';
-            statusEl.style.display = 'inline';
-            setTimeout(() => {
-                statusEl.style.display = 'none';
-            }, 2000);
-        }
-        return;
-    }
-    
-    writtenMarks[key][type][studentId] = markValue;
-    
-    // Use API service layer if available
-    if (typeof saveWrittenMarks === 'function') {
+
+    if (typeof window.apiSaveWrittenMark === 'function') {
         try {
-            await saveWrittenMarks(writtenMarks);
+            await window.apiSaveWrittenMark(subject || null, className, type, studentId, markValue);
+            if (typeof invalidateCache === 'function') invalidateCache('written_marks');
         } catch (error) {
-            console.warn('Supabase saveWrittenMarks failed, using localStorage:', error);
-            saveData('lms_written_marks', writtenMarks);
+            console.error('saveWrittenMark API failed:', error);
+            const statusEl = document.getElementById(`save-status-${type}-${studentId}`);
+            if (statusEl) {
+                statusEl.textContent = '✗ Save failed';
+                statusEl.style.color = 'var(--danger-color)';
+                statusEl.style.display = 'inline';
+                setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
+            }
+            return;
         }
     } else {
         saveData('lms_written_marks', writtenMarks);
@@ -447,31 +433,38 @@ window.saveAllMarks = async function(type, subject, className) {
         writtenMarks[key][type] = {};
     }
     
-    let savedCount = 0;
+    const marksToSave = [];
     students.forEach(student => {
         const input = document.getElementById(`mark_${type}_${student.id}`);
         if (input && input.value !== '') {
             const markValue = parseFloat(input.value);
             if (!isNaN(markValue) && markValue >= 0 && markValue <= 100) {
                 writtenMarks[key][type][student.id] = markValue;
-                savedCount++;
+                marksToSave.push({ studentId: student.id, mark: markValue });
             }
         }
     });
-    
-    // Use API service layer if available
-    if (typeof saveWrittenMarks === 'function') {
-        try {
-            await saveWrittenMarks(writtenMarks);
-            showAlert('written-marks', `${savedCount} mark(s) saved successfully`, 'success');
-        } catch (error) {
-            console.warn('Supabase saveWrittenMarks failed, using localStorage:', error);
-            saveData('lms_written_marks', writtenMarks);
-            showAlert('written-marks', `${savedCount} mark(s) saved successfully`, 'success');
+
+    const failures = [];
+    if (typeof window.apiSaveWrittenMark === 'function') {
+        for (const { studentId, mark } of marksToSave) {
+            try {
+                await window.apiSaveWrittenMark(subject || null, className, type, studentId, mark);
+            } catch (err) {
+                console.error(`saveWrittenMark failed for ${studentId}:`, err);
+                failures.push(studentId);
+            }
         }
+        if (typeof invalidateCache === 'function') invalidateCache('written_marks');
     } else {
         saveData('lms_written_marks', writtenMarks);
+    }
+
+    const savedCount = marksToSave.length - failures.length;
+    if (failures.length === 0) {
         showAlert('written-marks', `${savedCount} mark(s) saved successfully`, 'success');
+    } else {
+        showAlert('written-marks', `Saved ${savedCount} of ${marksToSave.length}. ${failures.length} failed — check console.`, 'error');
     }
 };
 

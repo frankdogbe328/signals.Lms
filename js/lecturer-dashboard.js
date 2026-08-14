@@ -638,30 +638,22 @@ async function createExam() {
             updatedAt: new Date().toISOString()
         };
         
-        // Save to Supabase or localStorage
         if (typeof saveExam === 'function') {
             try {
-                console.log('💾 calling saveExam(updated)...');
                 await saveExam(updatedExam);
-                console.log('✅ saveExam(updated) success');
             } catch (error) {
-                console.error('❌ saveExam(updated) failed:', error);
-                console.warn('Supabase saveExam failed, using localStorage:', error);
-                const examIndex = exams.findIndex(e => e.id === examId);
-                if (examIndex !== -1) {
-                    exams[examIndex] = updatedExam;
-                }
-                saveData('lms_exams', exams);
+                console.error('saveExam(updated) failed:', error);
+                showAlert('Failed to update exam: ' + (error.message || 'Unknown error'), 'error');
+                return;
             }
         } else {
-            console.warn('⚠️ saveExam function not found, using localStorage');
             const examIndex = exams.findIndex(e => e.id === examId);
             if (examIndex !== -1) {
                 exams[examIndex] = updatedExam;
             }
             saveData('lms_exams', exams);
         }
-        
+
         showAlert('Exam updated successfully!', 'success');
         cancelExamEdit();
     } else {
@@ -690,25 +682,18 @@ async function createExam() {
         
         if (typeof saveFunc === 'function') {
             try {
-                console.log('💾 calling saveExam(new)...');
                 const saved = await saveFunc(exam);
-                console.log('✅ saveExam(new) returned:', saved);
-                
-                // Add to local list immediately for UI update
                 exams.push(saved);
-                
             } catch (error) {
-                console.error('❌ saveExam(new) failed:', error);
-                console.warn('Supabase saveExam failed, using localStorage:', error);
-                exams.push(exam);
-                saveData('lms_exams', exams);
+                console.error('saveExam(new) failed:', error);
+                showAlert('Failed to create exam: ' + (error.message || 'Unknown error'), 'error');
+                return;
             }
         } else {
-            console.warn('⚠️ saveExam function NOT FOUND anywhere, using localStorage');
             exams.push(exam);
             saveData('lms_exams', exams);
         }
-        
+
         showAlert('Exam created successfully!', 'success');
         
         // Reset form
@@ -1014,22 +999,20 @@ window.toggleExamActivation = async function(examId, activate) {
 };
 
 window.toggleResultRelease = async function(examId, release) {
-    // Save to Supabase or localStorage
     if (typeof saveResultRelease === 'function') {
         try {
             await saveResultRelease(examId, release);
         } catch (error) {
-            console.warn('Supabase saveResultRelease failed, using localStorage:', error);
-            const releases = getData('lms_result_releases') || {};
-            releases[examId] = release;
-            saveData('lms_result_releases', releases);
+            console.error('saveResultRelease failed:', error);
+            showAlert('Failed to change result release: ' + (error.message || 'Unknown error'), 'error');
+            return;
         }
     } else {
         const releases = getData('lms_result_releases') || {};
         releases[examId] = release;
         saveData('lms_result_releases', releases);
     }
-    
+
     const action = release ? 'released' : 'hidden';
     showAlert(`Results ${action} successfully. Students ${release ? 'can' : 'cannot'} now view these results.`, 'success');
     

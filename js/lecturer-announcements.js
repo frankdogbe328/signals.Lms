@@ -175,25 +175,26 @@ document.addEventListener('DOMContentLoaded', function() {
                 createdAt: new Date().toISOString()
             };
             
-            // Use API service layer
             if (typeof saveAnnouncement === 'function') {
                 try {
                     await saveAnnouncement(newAnnouncement);
                 } catch (error) {
-                    console.warn('Supabase saveAnnouncement failed, using localStorage:', error);
-                    const announcements = getData('lms_announcements') || [];
-                    announcements.push(newAnnouncement);
-                    saveData('lms_announcements', announcements);
+                    console.error('saveAnnouncement failed:', error);
+                    if (typeof showNotification === 'function') {
+                        showNotification('Failed to post announcement: ' + (error.message || 'Unknown error'), 'error');
+                    } else {
+                        alert('Failed to post announcement: ' + (error.message || 'Unknown error'));
+                    }
+                    return;
                 }
             } else {
                 const announcements = getData('lms_announcements') || [];
                 announcements.push(newAnnouncement);
                 saveData('lms_announcements', announcements);
             }
-            
-            // Create notifications for all students in the selected classes
+
             await createAnnouncementNotifications(newAnnouncement, selectedClasses);
-            
+
             closeAnnouncementModal();
             await loadAnnouncements();
             if (typeof showNotification === 'function') {
@@ -282,7 +283,8 @@ document.addEventListener('DOMContentLoaded', function() {
             
             const announcements = [];
             
-            // Create announcement for each selected class
+            const failures = [];
+            let successes = 0;
             for (const className of selectedClasses) {
                 const newAnnouncement = {
                     id: Date.now().toString() + '_' + className + '_' + Math.random().toString(36).substr(2, 9),
@@ -297,34 +299,32 @@ document.addEventListener('DOMContentLoaded', function() {
                     createdBy: user.id,
                     createdAt: new Date().toISOString()
                 };
-                
-                // Use API service layer
+
                 if (typeof saveAnnouncement === 'function') {
                     try {
                         await saveAnnouncement(newAnnouncement);
                         await createAnnouncementNotifications(newAnnouncement, [className]);
+                        successes++;
                     } catch (error) {
-                        console.warn('Supabase saveAnnouncement failed, using localStorage:', error);
-                        announcements.push(newAnnouncement);
+                        console.error(`saveAnnouncement failed for ${className}:`, error);
+                        failures.push({ className, error: error.message || 'Unknown error' });
                     }
                 } else {
                     announcements.push(newAnnouncement);
+                    successes++;
                 }
             }
-            
-            // Save any that failed to save to Supabase
-            if (announcements.length > 0) {
-                const existing = getData('lms_announcements') || [];
-                existing.push(...announcements);
-                saveData('lms_announcements', existing);
-            }
-            
+
             closeBulkAnnouncementModal();
             await loadAnnouncements();
-            if (typeof showNotification === 'function') {
-                showNotification(`Announcement posted to ${selectedClasses.length} class(es) successfully!`, 'success');
+
+            if (failures.length === 0) {
+                const msg = `Announcement posted to ${successes} class(es) successfully!`;
+                if (typeof showNotification === 'function') showNotification(msg, 'success'); else alert(msg);
             } else {
-                alert(`Announcement posted to ${selectedClasses.length} class(es) successfully!`);
+                const failedList = failures.map(f => `${f.className}: ${f.error}`).join('; ');
+                const msg = `Posted to ${successes} of ${selectedClasses.length} classes. Failed: ${failedList}`;
+                if (typeof showNotification === 'function') showNotification(msg, 'error'); else alert(msg);
             }
         });
     }

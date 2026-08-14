@@ -889,19 +889,15 @@ function loadResultTable(tabType, exams, results, releases) {
 }
 
 window.toggleResultRelease = async function(examId, release) {
-    // Use API service layer
     if (typeof saveResultRelease === 'function') {
         try {
             await saveResultRelease(examId, release);
             const action = release ? 'released' : 'hidden';
             showAlert('results', `Results ${action} successfully. Students ${release ? 'can' : 'cannot'} now view these results.`, 'success');
         } catch (error) {
-            console.warn('Supabase saveResultRelease failed, using localStorage:', error);
-            const releases = getData('lms_result_releases') || {};
-            releases[examId] = release;
-            saveData('lms_result_releases', releases);
-            const action = release ? 'released' : 'hidden';
-            showAlert('results', `Results ${action} successfully. Students ${release ? 'can' : 'cannot'} now view these results.`, 'success');
+            console.error('saveResultRelease failed:', error);
+            showAlert('results', 'Failed to change result release: ' + (error.message || 'Unknown error'), 'error');
+            return;
         }
     } else {
         const releases = getData('lms_result_releases') || {};
@@ -910,7 +906,7 @@ window.toggleResultRelease = async function(examId, release) {
         const action = release ? 'released' : 'hidden';
         showAlert('results', `Results ${action} successfully. Students ${release ? 'can' : 'cannot'} now view these results.`, 'success');
     }
-    
+
     await loadResultReleases();
 }
 
@@ -1221,7 +1217,6 @@ function setupForms() {
                     return;
                 }
                 
-                // Try Supabase first
                 if (typeof updateClass === 'function') {
                     try {
                         await updateClass(classId, className);
@@ -1232,11 +1227,12 @@ function setupForms() {
                         await loadCourses();
                         return;
                     } catch (error) {
-                        console.warn('Supabase updateClass failed, using localStorage:', error);
+                        console.error('updateClass failed:', error);
+                        showAlert('classes', 'Failed to update class: ' + (error.message || 'Unknown error'), 'error');
+                        return;
                     }
                 }
-                
-                // Fallback to localStorage
+
                 const classIndex = classes.findIndex(c => c && c.id === classId);
                 if (classIndex !== -1) {
                     classes[classIndex].name = className;
@@ -1245,13 +1241,11 @@ function setupForms() {
                     cancelClassEdit();
                 }
             } else {
-                // Adding new class
                 if (classes.some(c => c && c.name && c.name.toLowerCase() === className.toLowerCase())) {
                     showAlert('classes', 'Class already exists', 'error');
                     return;
                 }
-                
-                // Try Supabase first
+
                 if (typeof saveClass === 'function') {
                     try {
                         await saveClass(className);
@@ -1262,11 +1256,12 @@ function setupForms() {
                         await loadCourses();
                         return;
                     } catch (error) {
-                        console.warn('Supabase saveClass failed, using localStorage:', error);
+                        console.error('saveClass failed:', error);
+                        showAlert('classes', 'Failed to add class: ' + (error.message || 'Unknown error'), 'error');
+                        return;
                     }
                 }
-                
-                // Fallback to localStorage
+
                 classes.push({
                     id: Date.now().toString(),
                     name: className,
@@ -1311,7 +1306,6 @@ function setupForms() {
                     return;
                 }
                 
-                // Try Supabase first
                 if (typeof updateCourse === 'function') {
                     try {
                         await updateCourse(courseId, { subject, class: courseClass });
@@ -1321,11 +1315,12 @@ function setupForms() {
                         await loadCourses();
                         return;
                     } catch (error) {
-                        console.warn('Supabase updateCourse failed, using localStorage:', error);
+                        console.error('updateCourse failed:', error);
+                        showAlert('courses', 'Failed to update course: ' + (error.message || 'Unknown error'), 'error');
+                        return;
                     }
                 }
-                
-                // Fallback to localStorage
+
                 const courseIndex = courses.findIndex(c => c && c.id === courseId);
                 if (courseIndex !== -1) {
                     courses[courseIndex].subject = subject;
@@ -1335,13 +1330,11 @@ function setupForms() {
                     cancelCourseEdit();
                 }
             } else {
-                // Adding new course
                 if (courses.some(c => c && c.subject && c.subject.toLowerCase() === subject.toLowerCase() && c.class === courseClass)) {
                     showAlert('courses', 'Course already exists for this class', 'error');
                     return;
                 }
-                
-                // Try Supabase first
+
                 if (typeof saveCourse === 'function') {
                     try {
                         await saveCourse({ subject, class: courseClass });
@@ -1351,11 +1344,12 @@ function setupForms() {
                         await loadCourses();
                         return;
                     } catch (error) {
-                        console.warn('Supabase saveCourse failed, using localStorage:', error);
+                        console.error('saveCourse failed:', error);
+                        showAlert('courses', 'Failed to add course: ' + (error.message || 'Unknown error'), 'error');
+                        return;
                     }
                 }
-                
-                // Fallback to localStorage
+
                 courses.push({
                     id: Date.now().toString(),
                     subject,
