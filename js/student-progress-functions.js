@@ -57,6 +57,35 @@ async function loadProgress() {
     const highestScore = Math.max(...userResults.map(r => r.score || 0));
     const passedExams = userResults.filter(r => (r.score || 0) >= 50).length;
     const passRate = (passedExams / totalExams) * 100;
+
+    // Class rank — average this student's score across all released exams
+    // and compare to peers in the same class.
+    let rankDisplay = null;
+    try {
+        let userClass = user.class;
+        if (Array.isArray(userClass)) userClass = userClass[0];
+        if (!userClass && Array.isArray(user.classes)) userClass = user.classes[0];
+        userClass = String(userClass || '').trim();
+
+        if (userClass && typeof getUsers === 'function') {
+            const users = await getUsers();
+            const classmates = (users.students || []).filter(s =>
+                s && (s.class === userClass || (Array.isArray(s.classes) && s.classes.includes(userClass)))
+            );
+            if (classmates.length >= 2) {
+                const avgByStudent = classmates.map(s => {
+                    const theirResults = results.filter(r => r.studentId === s.id && isResultReleased(r, s, releases, exams));
+                    if (!theirResults.length) return { id: s.id, avg: -1 };
+                    const total = theirResults.reduce((sum, r) => sum + (r.score || 0), 0);
+                    return { id: s.id, avg: total / theirResults.length };
+                }).filter(x => x.avg >= 0);
+
+                avgByStudent.sort((a, b) => b.avg - a.avg);
+                const myRank = avgByStudent.findIndex(x => x.id === user.id) + 1;
+                if (myRank > 0) rankDisplay = `${myRank} of ${avgByStudent.length}`;
+            }
+        }
+    } catch (err) { console.warn('Class rank calc failed:', err); }
     
     // Group by subject
     const bySubject = {};
@@ -89,6 +118,12 @@ async function loadProgress() {
                 <h4 style="margin: 0 0 10px 0; color: var(--danger-color);">Pass Rate</h4>
                 <p style="font-size: 2rem; font-weight: bold; margin: 0;">${passRate.toFixed(1)}%</p>
             </div>
+            ${rankDisplay ? `
+                <div class="card" style="text-align: center; padding: 20px;">
+                    <h4 style="margin: 0 0 10px 0; color: var(--primary-color);">Class Rank</h4>
+                    <p style="font-size: 2rem; font-weight: bold; margin: 0;">${rankDisplay}</p>
+                </div>
+            ` : ''}
         </div>
         
         <div class="card" style="margin-bottom: 20px;">
