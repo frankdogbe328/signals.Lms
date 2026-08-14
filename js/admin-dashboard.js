@@ -1115,25 +1115,36 @@ function loadSettings() {
 async function loadRegistrationKeys() {
     const tbody = document.getElementById('registration-keys-tbody');
     if (!tbody) return;
-    
+
+    const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
     try {
         const keys = await getRegistrationKeys();
-        
+
         if (!keys || keys.length === 0) {
             tbody.innerHTML = '<tr><td colspan="3" style="text-align: center;">No active registration keys</td></tr>';
         } else {
             tbody.innerHTML = '';
             keys.forEach(k => {
                 const row = document.createElement('tr');
+                const keyStr = String(k.key ?? '');
                 row.innerHTML = `
-                    <td><code style="background: var(--light-color); padding: 5px 10px; border-radius: 4px; font-weight: bold;">${k.key}</code></td>
+                    <td><code style="background: var(--light-color); padding: 5px 10px; border-radius: 4px; font-weight: bold;">${escapeHtml(keyStr)}</code></td>
                     <td>${new Date(k.createdAt).toLocaleString()}</td>
                     <td>
-                        <button class="btn-small btn-danger" onclick="handleDeleteRegistrationKey('${k.key}')">Revoke</button>
+                        <button class="btn-small btn-danger revoke-key-btn" data-key="${escapeHtml(keyStr)}">Revoke</button>
                     </td>
                 `;
                 tbody.appendChild(row);
             });
+        }
+
+        if (!tbody._revokeHandlerBound) {
+            tbody.addEventListener('click', (e) => {
+                const btn = e.target.closest('.revoke-key-btn');
+                if (btn) window.handleDeleteRegistrationKey(btn.dataset.key);
+            });
+            tbody._revokeHandlerBound = true;
         }
     } catch (error) {
         console.error('Error loading keys:', error);
@@ -2038,7 +2049,6 @@ function setupUserForm() {
                     return;
                 }
                 
-                // Try Supabase first
                 if (typeof updateUser === 'function') {
                     try {
                         await updateUser(userId, 'student', {
@@ -2046,8 +2056,6 @@ function setupUserForm() {
                             fullName,
                             username,
                             password,
-                            telephone,
-                            email,
                             telephone,
                             email,
                             class: classValue,
@@ -2061,7 +2069,9 @@ function setupUserForm() {
                         await loadDashboard();
                         return;
                     } catch (error) {
-                        console.warn('Supabase updateUser failed, using localStorage:', error);
+                        console.error('updateUser failed:', error);
+                        showAlert('add-user', 'Failed to update student: ' + (error.message || 'Unknown error'), 'error');
+                        return;
                     }
                 }
                 
@@ -2075,7 +2085,6 @@ function setupUserForm() {
                         username,
                         password,
                         telephone,
-                        email,
                         email,
                         class: classValue,
                         canPrintResults: canPrint
@@ -2097,14 +2106,12 @@ function setupUserForm() {
                     password,
                     telephone,
                     email,
-                    email,
                     class: classValue,
                     can_print_results: canPrint,
                     type: 'student',
                     registeredAt: new Date().toISOString()
                 };
                 
-                // Try Supabase first
                 if (typeof saveUser === 'function') {
                     try {
                         await saveUser(newStudent);
@@ -2116,11 +2123,12 @@ function setupUserForm() {
                         await loadDashboard();
                         return;
                     } catch (error) {
-                        console.warn('Supabase saveUser failed, using localStorage:', error);
+                        console.error('saveUser failed:', error);
+                        showAlert('add-user', 'Failed to add student: ' + (error.message || 'Unknown error'), 'error');
+                        return;
                     }
                 }
 
-                // Fallback to localStorage
                 newStudent.id = Date.now().toString();
                 users.students.push(newStudent);
                 saveData('lms_users', users);
@@ -2139,7 +2147,6 @@ function setupUserForm() {
                     return;
                 }
                 
-                // Try Supabase first
                 if (typeof updateUser === 'function') {
                     try {
                         await updateUser(userId, 'lecturer', {
@@ -2160,7 +2167,9 @@ function setupUserForm() {
                         await loadDashboard();
                         return;
                     } catch (error) {
-                        console.warn('Supabase updateUser failed, using localStorage:', error);
+                        console.error('updateUser failed:', error);
+                        showAlert('add-user', 'Failed to update lecturer: ' + (error.message || 'Unknown error'), 'error');
+                        return;
                     }
                 }
                 
@@ -2201,7 +2210,6 @@ function setupUserForm() {
                     registeredAt: new Date().toISOString()
                 };
                 
-                // Try Supabase first
                 if (typeof saveUser === 'function') {
                     try {
                         await saveUser(newLecturer);
@@ -2213,11 +2221,12 @@ function setupUserForm() {
                         await loadDashboard();
                         return;
                     } catch (error) {
-                        console.warn('Supabase saveUser failed, using localStorage:', error);
+                        console.error('saveUser failed:', error);
+                        showAlert('add-user', 'Failed to add lecturer: ' + (error.message || 'Unknown error'), 'error');
+                        return;
                     }
                 }
 
-                // Fallback to localStorage
                 newLecturer.id = Date.now().toString();
                 users.lecturers.push(newLecturer);
                 saveData('lms_users', users);

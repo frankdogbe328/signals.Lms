@@ -63,9 +63,13 @@ export default async function handler(req, res) {
                 const { rows: ex } = await db.query('SELECT id FROM users WHERE username = $1', [username]);
                 if (ex.length) return res.status(409).json({ error: 'Username already exists' });
                 if (type === 'lecturer') {
-                    if (!registrationKey) return res.status(400).json({ error: 'Registration key required for lecturers' });
-                    const { rows: keys } = await db.query('SELECT id FROM registration_keys WHERE key = $1', [registrationKey]);
-                    if (!keys.length) return res.status(401).json({ error: 'Invalid registration key' });
+                    const caller = verifyToken(req);
+                    const isAdminCaller = caller && caller.type === 'admin';
+                    if (!isAdminCaller) {
+                        if (!registrationKey) return res.status(400).json({ error: 'Registration key required for lecturers' });
+                        const { rows: keys } = await db.query('SELECT id FROM registration_keys WHERE key = $1', [registrationKey]);
+                        if (!keys.length) return res.status(401).json({ error: 'Invalid registration key' });
+                    }
                 }
                 let classId = null;
                 if (className) {
