@@ -1188,6 +1188,40 @@ window.handleDeleteRegistrationKey = async function(keyToDelete) {
     }
 };
 
+window.runCleanupNow = async function() {
+    if (!confirm('Purge old audit logs, read notifications, expired announcements, and stale exam questions? Grade data is not affected.')) return;
+
+    const resultEl = document.getElementById('cleanup-result');
+    if (resultEl) {
+        resultEl.style.display = 'block';
+        resultEl.textContent = 'Running cleanup...';
+    }
+
+    try {
+        const token = typeof window.getApiToken === 'function' ? window.getApiToken() : localStorage.getItem('lms_api_token');
+        const res = await fetch('/api/cleanup', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+            }
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Cleanup failed (${res.status})`);
+
+        const summary = data.deleted || {};
+        const totalDeleted = Object.values(summary).reduce((sum, v) => sum + (typeof v === 'number' ? v : 0), 0);
+
+        if (resultEl) resultEl.textContent = JSON.stringify(data, null, 2);
+        showAlert('settings', `Cleanup complete — ${totalDeleted} row(s) deleted across ${Object.keys(summary).length} tables.`, 'success');
+        if (typeof logAction === 'function') logAction('DB_CLEANUP', `Ran DB cleanup — ${totalDeleted} rows deleted`, summary);
+    } catch (error) {
+        console.error('Cleanup failed:', error);
+        if (resultEl) resultEl.textContent = 'Cleanup failed: ' + (error.message || 'Unknown error');
+        showAlert('settings', 'Cleanup failed: ' + (error.message || 'Unknown error'), 'error');
+    }
+};
+
 function setupForms() {
     // Class form
     const classForm = document.getElementById('classForm');

@@ -1,1 +1,11 @@
-{"cleanUrls":true,"trailingSlash":false,"rewrites":[{"source":"/api/:p0/:p1","destination":"/api?p0=:p0&p1=:p1"},{"source":"/api/:p0","destination":"/api?p0=:p0"}]}
+{
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "rewrites": [
+    { "source": "/api/:p0/:p1", "destination": "/api?p0=:p0&p1=:p1" },
+    { "source": "/api/:p0", "destination": "/api?p0=:p0" }
+  ],
+  "crons": [
+    { "path": "/api/cleanup", "schedule": "0 3 * * *" }
+  ]
+}

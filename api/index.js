@@ -28,6 +28,47 @@ export default async function handler(req, res) {
             return res.json({ ok: true, ts: Date.now() });
         }
 
+        // ── CLEANUP (retention pruning) ─────────────────────────────────────
+        if (seg0 === 'cleanup') {
+            if (req.method !== 'POST' && req.method !== 'GET') {
+                return res.status(405).json({ error: 'Method not allowed' });
+            }
+            const isVercelCron = req.headers['x-vercel-cron'] === '1'
+                || (process.env.CRON_SECRET && req.headers['authorization'] === `Bearer ${process.env.CRON_SECRET}`);
+            let isAdmin = false;
+            if (!isVercelCron) {
+                const caller = verifyToken(req);
+                isAdmin = caller && caller.type === 'admin';
+                if (!isAdmin) return res.status(401).json({ error: 'Unauthorized' });
+            }
+
+            const summary = {};
+            const runQuery = async (label, sql) => {
+                try {
+                    const { rowCount } = await db.query(sql);
+                    summary[label] = rowCount || 0;
+                } catch (err) {
+                    console.error(`Cleanup ${label} failed:`, err.message);
+                    summary[label] = { error: err.message };
+                }
+            };
+
+            await runQuery('audit_logs', `DELETE FROM audit_logs WHERE created_at < NOW() - INTERVAL '30 days'`);
+            await runQuery('notifications_read', `DELETE FROM notifications WHERE read = true AND created_at < NOW() - INTERVAL '14 days'`);
+            await runQuery('notifications_stale', `DELETE FROM notifications WHERE created_at < NOW() - INTERVAL '60 days'`);
+            await runQuery('announcements', `DELETE FROM announcements WHERE created_at < NOW() - INTERVAL '90 days'`);
+            await runQuery('registration_keys', `DELETE FROM registration_keys WHERE created_at < NOW() - INTERVAL '30 days'`);
+            await runQuery('exam_questions', `
+                DELETE FROM exam_questions WHERE exam_id IN (
+                    SELECT e.id FROM exams e
+                    WHERE e.created_at < NOW() - INTERVAL '30 days'
+                      AND EXISTS (SELECT 1 FROM results r WHERE r.exam_id = e.id)
+                )
+            `);
+
+            return res.json({ ok: true, ranAt: new Date().toISOString(), deleted: summary });
+        }
+
         // ── AUTH ─────────────────────────────────────────────────────────────
         if (seg0 === 'auth') {
             if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
