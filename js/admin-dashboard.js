@@ -1188,6 +1188,60 @@ window.handleDeleteRegistrationKey = async function(keyToDelete) {
     }
 };
 
+window.loadSystemStatus = async function() {
+    const display = document.getElementById('system-status-display');
+    if (!display) return;
+    display.style.display = 'block';
+    display.innerHTML = '<p style="color: var(--text-light);">Loading...</p>';
+
+    try {
+        const token = typeof window.getApiToken === 'function' ? window.getApiToken() : localStorage.getItem('lms_api_token');
+        if (!token) {
+            display.innerHTML = '<p style="color:#dc2626;">Not logged in. Log out and log in again.</p>';
+            return;
+        }
+        const res = await fetch('/api/health', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.status === 401) {
+            display.innerHTML = '<p style="color:#dc2626;">Session expired. Log out and log in again.</p>';
+            return;
+        }
+        const data = await res.json();
+
+        const dbColor = data.db?.status === 'connected' ? '#16a34a' : '#dc2626';
+        const lastCleanup = data.lastCleanupAt
+            ? new Date(data.lastCleanupAt).toLocaleString()
+            : '<span style="color:#dc2626;">never</span>';
+
+        let tableRows = '';
+        for (const [name, count] of Object.entries(data.tables || {})) {
+            const val = typeof count === 'number' ? count.toLocaleString() : `<span style="color:#dc2626;">${count.error || 'error'}</span>`;
+            tableRows += `<tr><td>${name}</td><td style="text-align:right;font-family:monospace;">${val}</td></tr>`;
+        }
+
+        display.innerHTML = `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">
+                <div style="padding:12px;background:var(--light-color);border-radius:6px;">
+                    <div style="font-size:0.85rem;color:var(--text-light);">Database</div>
+                    <div style="font-weight:bold;color:${dbColor};">${data.db?.status || 'unknown'}</div>
+                    <div style="font-size:0.8rem;color:var(--text-light);">${data.db?.latencyMs || 0}ms ping</div>
+                </div>
+                <div style="padding:12px;background:var(--light-color);border-radius:6px;">
+                    <div style="font-size:0.85rem;color:var(--text-light);">Last cleanup</div>
+                    <div style="font-weight:bold;">${lastCleanup}</div>
+                </div>
+            </div>
+            <table style="width:100%;font-size:0.9rem;">
+                <thead><tr><th style="text-align:left;">Table</th><th style="text-align:right;">Rows</th></tr></thead>
+                <tbody>${tableRows}</tbody>
+            </table>
+        `;
+    } catch (err) {
+        display.innerHTML = `<p style="color:#dc2626;">Health check failed: ${err.message}</p>`;
+    }
+};
+
 window.runCleanupNow = async function() {
     if (!confirm('Purge old audit logs, read notifications, expired announcements, and stale exam questions? Grade data is not affected.')) return;
 

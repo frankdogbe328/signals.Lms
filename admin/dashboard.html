@@ -541,6 +541,15 @@
                 </div>
 
                 <div class="card" style="margin-bottom: 30px;">
+                    <h4>System Status</h4>
+                    <p>Live view of database health and table row counts.</p>
+                    <div style="margin: 15px 0;">
+                        <button class="btn btn-primary" onclick="loadSystemStatus()">Refresh Status</button>
+                    </div>
+                    <div id="system-status-display" style="display:none;"></div>
+                </div>
+
+                <div class="card" style="margin-bottom: 30px;">
                     <h4>Database Cleanup</h4>
                     <p>Prunes old rows to keep Neon storage lean. Runs automatically each night at 3am UTC; use this button to run it on demand.</p>
                     <ul style="color: var(--text-light); font-size: 0.9rem; margin-bottom: 15px;">

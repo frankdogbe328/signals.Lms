@@ -4,6 +4,33 @@ import { cors } from './_cors.js';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 
+// In-memory sliding-window rate limit for /auth/login.
+// Note: serverless functions on Vercel are per-instance, so this caps
+// per-instance not truly global — but any single attacker will usually
+// hit the same warm instance, and this is still enough to blunt basic
+// credential-stuffing without adding a Redis dependency.
+const LOGIN_ATTEMPTS = new Map();
+const LOGIN_WINDOW_MS = 60_000;
+const LOGIN_MAX_ATTEMPTS = 10;
+
+function loginRateLimitExceeded(req) {
+    const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+        || req.headers['x-real-ip']
+        || req.socket?.remoteAddress
+        || 'unknown';
+    const now = Date.now();
+    const attempts = (LOGIN_ATTEMPTS.get(ip) || []).filter(ts => now - ts < LOGIN_WINDOW_MS);
+    attempts.push(now);
+    LOGIN_ATTEMPTS.set(ip, attempts);
+    // Opportunistic cleanup so the map doesn't grow forever
+    if (LOGIN_ATTEMPTS.size > 500) {
+        for (const [k, v] of LOGIN_ATTEMPTS.entries()) {
+            if (v[v.length - 1] < now - LOGIN_WINDOW_MS) LOGIN_ATTEMPTS.delete(k);
+        }
+    }
+    return attempts.length > LOGIN_MAX_ATTEMPTS;
+}
+
 export default async function handler(req, res) {
     if (cors(req, res)) return;
 
@@ -26,6 +53,47 @@ export default async function handler(req, res) {
         if (seg0 === 'ping') {
             await db.query('SELECT 1');
             return res.json({ ok: true, ts: Date.now() });
+        }
+
+        // ── HEALTH ──────────────────────────────────────────────────────────
+        if (seg0 === 'health') {
+            const caller = verifyToken(req);
+            const isAdmin = caller && caller.type === 'admin';
+            if (!isAdmin) return res.status(401).json({ error: 'Unauthorized' });
+
+            const health = { ok: true, ranAt: new Date().toISOString(), db: {}, tables: {} };
+            const startDb = Date.now();
+            try {
+                await db.query('SELECT 1');
+                health.db.status = 'connected';
+                health.db.latencyMs = Date.now() - startDb;
+            } catch (err) {
+                health.ok = false;
+                health.db.status = 'error';
+                health.db.error = err.message;
+                return res.status(500).json(health);
+            }
+
+            const tableNames = ['users', 'classes', 'courses', 'exams', 'exam_questions',
+                'results', 'materials', 'announcements', 'notifications',
+                'audit_logs', 'registration_keys', 'written_marks'];
+            for (const t of tableNames) {
+                try {
+                    const { rows } = await db.query(`SELECT COUNT(*)::int AS n FROM ${t}`);
+                    health.tables[t] = rows[0].n;
+                } catch (err) {
+                    health.tables[t] = { error: err.message };
+                }
+            }
+
+            try {
+                const { rows } = await db.query(
+                    `SELECT created_at FROM audit_logs WHERE action_type = 'DB_CLEANUP' ORDER BY created_at DESC LIMIT 1`
+                );
+                health.lastCleanupAt = rows[0]?.created_at || null;
+            } catch { health.lastCleanupAt = null; }
+
+            return res.json(health);
         }
 
         // ── CLEANUP (retention pruning) ─────────────────────────────────────
@@ -74,6 +142,9 @@ export default async function handler(req, res) {
             if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
             if (seg1 === 'login') {
+                if (loginRateLimitExceeded(req)) {
+                    return res.status(429).json({ error: 'Too many login attempts. Please wait a minute and try again.' });
+                }
                 const { username, password, type } = req.body;
                 if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
                 const q = type
