@@ -180,13 +180,26 @@ CREATE TABLE IF NOT EXISTS written_marks (
 CREATE TABLE IF NOT EXISTS registration_keys (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     key VARCHAR(100) UNIQUE NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '7 days'),
+    used_at TIMESTAMPTZ,
+    classes TEXT[] NOT NULL DEFAULT '{}',
+    subjects TEXT[] NOT NULL DEFAULT '{}'
 );
 
--- Default admin user (password: admin123)
-INSERT INTO users (username, password_hash, full_name, type)
-VALUES ('admin', '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'System Administrator', 'admin')
-ON CONFLICT (username) DO NOTHING;
+ALTER TABLE registration_keys
+    ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS used_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS classes TEXT[] NOT NULL DEFAULT '{}',
+    ADD COLUMN IF NOT EXISTS subjects TEXT[] NOT NULL DEFAULT '{}';
+
+UPDATE registration_keys
+SET expires_at = COALESCE(created_at, NOW()) + INTERVAL '7 days'
+WHERE expires_at IS NULL;
+
+ALTER TABLE registration_keys
+    ALTER COLUMN expires_at SET DEFAULT (NOW() + INTERVAL '7 days'),
+    ALTER COLUMN expires_at SET NOT NULL;
 
 -- Indexes on hot query paths
 CREATE INDEX IF NOT EXISTS idx_users_type ON users(type);
@@ -204,3 +217,5 @@ CREATE INDEX IF NOT EXISTS idx_exam_questions_exam ON exam_questions(exam_id);
 CREATE INDEX IF NOT EXISTS idx_courses_class ON courses(class_id);
 CREATE INDEX IF NOT EXISTS idx_materials_class ON materials(class_id);
 CREATE INDEX IF NOT EXISTS idx_written_marks_student ON written_marks(student_id);
+CREATE INDEX IF NOT EXISTS idx_exams_created_by ON exams(created_by);
+CREATE INDEX IF NOT EXISTS idx_materials_uploaded_by ON materials(uploaded_by);

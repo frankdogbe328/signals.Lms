@@ -18,6 +18,13 @@ import assert from 'node:assert';
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 const ADMIN_USER = process.env.ADMIN_USER;
 const ADMIN_PASS = process.env.ADMIN_PASS;
+const STUDENT_TOKEN = process.env.STUDENT_TOKEN;
+const LECTURER_TOKEN = process.env.LECTURER_TOKEN;
+const OTHER_LECTURER_EXAM_ID = process.env.OTHER_LECTURER_EXAM_ID;
+const OTHER_LECTURER_MATERIAL_ID = process.env.OTHER_LECTURER_MATERIAL_ID;
+const OTHER_LECTURER_ANNOUNCEMENT_ID = process.env.OTHER_LECTURER_ANNOUNCEMENT_ID;
+const OTHER_NOTIFICATION_ID = process.env.OTHER_NOTIFICATION_ID;
+const SECURITY_TEST_EXAM_ID = process.env.SECURITY_TEST_EXAM_ID;
 
 let adminToken = null;
 
@@ -34,9 +41,10 @@ async function api(path, opts = {}) {
     return { status: res.status, body };
 }
 
-describe('/api smoke tests', () => {
+describe('/api smoke tests', { skip: process.env.RUN_API_TESTS !== '1' }, () => {
     before(async () => {
         // Attempt to log in as admin — if this fails, most tests will be skipped
+        if (!ADMIN_USER || !ADMIN_PASS) return;
         const res = await api('/api/auth/login', {
             method: 'POST',
             body: JSON.stringify({ username: ADMIN_USER, password: ADMIN_PASS, type: 'admin' })
@@ -58,6 +66,111 @@ describe('/api smoke tests', () => {
         const res = await api('/api/auth/register', {
             method: 'POST',
             body: JSON.stringify({ username: 'forbidden-admin-smoke-test', password: 'TestPassword123!', type: 'admin' })
+        });
+
+        test('Public registration cannot set privileged profile fields', async () => {
+            const res = await api('/api/auth/register', {
+                method: 'POST',
+                body: JSON.stringify({ username: 'privileged-field-smoke-test', password: 'TestPassword123!', type: 'student', canPrintResults: true })
+            });
+            assert.strictEqual(res.status, 400);
+        });
+
+        test('Student cannot create an administrative notification', async (t) => {
+            if (!STUDENT_TOKEN) return t.skip('STUDENT_TOKEN not configured');
+            const res = await api('/api/notifications', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${STUDENT_TOKEN}` },
+                body: JSON.stringify({ userId: '00000000-0000-0000-0000-000000000001', title: 'forged', message: 'forged' })
+            });
+            assert.strictEqual(res.status, 403);
+        });
+
+        test('Student cannot manage exams or users', async (t) => {
+            if (!STUDENT_TOKEN) return t.skip('STUDENT_TOKEN not configured');
+            const headers = { Authorization: `Bearer ${STUDENT_TOKEN}` };
+            const [users, examCreate, uploadSignature, exams] = await Promise.all([
+                api('/api/users', { headers }),
+                api('/api/exams', { method: 'POST', headers, body: JSON.stringify({ title: 'forged' }) }),
+                api('/api/materials/upload-signature', { headers }),
+                api('/api/exams', { headers })
+            ]);
+            assert.strictEqual(users.status, 403);
+            assert.strictEqual(examCreate.status, 403);
+            assert.strictEqual(uploadSignature.status, 403);
+            assert.strictEqual(exams.status, 200);
+            assert.ok(exams.body.every(exam => (exam.questions || []).every(question => !Object.prototype.hasOwnProperty.call(question, 'correctAnswer'))));
+        });
+
+        test('Lecturer cannot submit authoritative results or create administrator accounts', async (t) => {
+            if (!LECTURER_TOKEN) return t.skip('LECTURER_TOKEN not configured');
+            const headers = { Authorization: `Bearer ${LECTURER_TOKEN}` };
+            const [result, registration] = await Promise.all([
+                api('/api/results', { method: 'POST', headers, body: JSON.stringify({ examId: '00000000-0000-0000-0000-000000000001', score: 100, isReleased: true }) }),
+                api('/api/auth/register', { method: 'POST', headers, body: JSON.stringify({ username: 'lecturer-admin-smoke-test', password: 'TestPassword123!', type: 'admin' }) })
+            ]);
+            assert.strictEqual(result.status, 403);
+            assert.strictEqual(registration.status, 403);
+        });
+
+        test('Lecturer cannot update or release another lecturer examination', async (t) => {
+            if (!LECTURER_TOKEN || !OTHER_LECTURER_EXAM_ID) return t.skip('LECTURER_TOKEN and OTHER_LECTURER_EXAM_ID fixtures required');
+            const headers = { Authorization: `Bearer ${LECTURER_TOKEN}` };
+            const [update, release] = await Promise.all([
+                api('/api/exams', {
+                    method: 'POST', headers,
+                    body: JSON.stringify({ id: OTHER_LECTURER_EXAM_ID, title: 'forged', classes: [], questions: [] })
+                }),
+                api('/api/result-releases', {
+                    method: 'POST', headers,
+                    body: JSON.stringify({ examId: OTHER_LECTURER_EXAM_ID, isReleased: true })
+                })
+            ]);
+            assert.strictEqual(update.status, 403);
+            assert.strictEqual(release.status, 403);
+        });
+
+        test('Lecturer cannot delete another lecturer material or announcement', async (t) => {
+            if (!LECTURER_TOKEN || !OTHER_LECTURER_MATERIAL_ID || !OTHER_LECTURER_ANNOUNCEMENT_ID) {
+                return t.skip('Lecturer token and other-owner material/announcement fixtures required');
+            }
+            const headers = { Authorization: `Bearer ${LECTURER_TOKEN}` };
+            const [material, announcement] = await Promise.all([
+                api(`/api/materials/${OTHER_LECTURER_MATERIAL_ID}`, { method: 'DELETE', headers }),
+                api(`/api/announcements/${OTHER_LECTURER_ANNOUNCEMENT_ID}`, { method: 'DELETE', headers })
+            ]);
+            assert.ok([403, 404].includes(material.status));
+            assert.strictEqual(announcement.status, 404);
+        });
+
+        test('Student cannot mark another user notification as read', async (t) => {
+            if (!STUDENT_TOKEN || !OTHER_NOTIFICATION_ID) return t.skip('STUDENT_TOKEN and OTHER_NOTIFICATION_ID fixtures required');
+            const res = await api(`/api/notifications/${OTHER_NOTIFICATION_ID}`, {
+                method: 'PUT',
+                headers: { Authorization: `Bearer ${STUDENT_TOKEN}` },
+                body: '{}'
+            });
+            assert.ok([403, 404].includes(res.status));
+        });
+
+        test('Student cannot forge score or release status during exam submission', async (t) => {
+            if (!STUDENT_TOKEN || !SECURITY_TEST_EXAM_ID) return t.skip('Student token and dedicated eligible exam fixture required');
+            const res = await api('/api/results', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${STUDENT_TOKEN}` },
+                body: JSON.stringify({
+                    examId: SECURITY_TEST_EXAM_ID,
+                    answers: [],
+                    score: 100,
+                    correctAnswers: 999,
+                    isReleased: true,
+                    studentId: '00000000-0000-0000-0000-000000000001'
+                })
+            });
+            assert.strictEqual(res.status, 201);
+            assert.notStrictEqual(res.body.score, 100);
+            assert.strictEqual(res.body.isReleased, false);
+            assert.notStrictEqual(res.body.correctAnswers, 999);
         });
         assert.ok([403, 401].includes(res.status));
     });

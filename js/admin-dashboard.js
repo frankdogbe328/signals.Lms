@@ -1147,25 +1147,28 @@ async function loadRegistrationKeys() {
 }
 
 window.generateRegistrationKey = async function() {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let key = 'LECT-';
-    for (let i = 0; i < 2; i++) {
-        for (let j = 0; j < 4; j++) {
-            key += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
-        if (i < 1) key += '-';
-    }
-    
     try {
+        const [classes, courses] = await Promise.all([getClasses(), getCourses()]);
+        const classNames = [...new Set(classes.map(item => typeof item === 'string' ? item : item.name).filter(Boolean))];
+        const subjectNames = [...new Set(courses.map(item => typeof item === 'string' ? item : item.subject).filter(Boolean))];
+        const selectedClasses = prompt(`Enter the classes this lecturer may access, separated by commas.\nAvailable: ${classNames.join(', ')}`, '');
+        if (selectedClasses === null) return;
+        const selectedSubjects = prompt(`Enter the subjects this lecturer may access, separated by commas.\nAvailable: ${subjectNames.join(', ')}`, '');
+        if (selectedSubjects === null) return;
+        const keyAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        const randomBytes = new Uint8Array(20);
+        crypto.getRandomValues(randomBytes);
+        const key = `LECT-${Array.from(randomBytes, value => keyAlphabet[value & 31]).join('')}`;
         const keyData = {
             key: key,
-            createdAt: new Date().toISOString()
+            classes: selectedClasses.split(',').map(value => value.trim()).filter(Boolean),
+            subjects: selectedSubjects.split(',').map(value => value.trim()).filter(Boolean)
         };
         
         await saveRegistrationKey(keyData);
         await loadRegistrationKeys();
         showAlert('settings', `Generated new key: ${key}`, 'success');
-        if (typeof logAction === 'function') logAction('GENERATE_REG_KEY', `Generated lecturer registration key: ${key}`, { key });
+        if (typeof logAction === 'function') logAction('GENERATE_REG_KEY', 'Generated a scoped lecturer registration key');
     } catch (error) {
         console.error('Error generating key:', error);
         showAlert('settings', 'Failed to generate key. Please try again.', 'error');

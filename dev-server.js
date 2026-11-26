@@ -10,6 +10,7 @@ import pg from 'pg';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import { canManageExam, getEligibleExam, getRegistrationAssignments, gradeObjectiveQuestions, isExamOpen } from './api/_security.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const { Pool } = pg;
@@ -49,8 +50,33 @@ mkdirSync(UPLOADS_DIR, { recursive: true });
 
 // ---- helpers ----
 function json(res, data, status = 200) {
-    res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS' });
+    res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS' });
     res.end(JSON.stringify(data));
+}
+
+function applyCors(req, res) {
+    const origin = req.headers.origin;
+    const allowed = (process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean);
+    const localOrigin = process.env.NODE_ENV !== 'production' && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin || '');
+    if (origin && (allowed.includes(origin) || localOrigin)) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+    }
+}
+
+const LOGIN_ATTEMPTS = new Map();
+function loginRateLimitExceeded(req) {
+    const ip = req.socket?.remoteAddress || 'unknown';
+    const now = Date.now();
+    const attempts = (LOGIN_ATTEMPTS.get(ip) || []).filter(timestamp => now - timestamp < 60_000);
+    attempts.push(now);
+    LOGIN_ATTEMPTS.set(ip, attempts);
+    if (LOGIN_ATTEMPTS.size > 500) {
+        for (const [key, values] of LOGIN_ATTEMPTS) {
+            if (!values.length || values[values.length - 1] < now - 60_000) LOGIN_ATTEMPTS.delete(key);
+        }
+    }
+    return attempts.length > 10;
 }
 
 function verifyToken(req) {
@@ -83,7 +109,6 @@ function serveStatic(res, filePath, acceptEncoding = '') {
 
     const headers = {
         'Content-Type': mime,
-        'Access-Control-Allow-Origin': '*',
         'Vary': 'Accept-Encoding',
     };
 
@@ -115,13 +140,14 @@ function serveStatic(res, filePath, acceptEncoding = '') {
 async function handleApi(req, res, pathname) {
     const method = req.method;
     const token = verifyToken(req);
-    const b = ['POST', 'PUT', 'DELETE'].includes(method) ? await body(req) : {};
+    const b = ['POST', 'PUT', 'DELETE'].includes(method) && pathname !== '/api/upload' ? await body(req) : {};
     const q = Object.fromEntries(new URL(req.url, 'http://x').searchParams);
 
     if (method === 'OPTIONS') { json(res, {}); return; }
 
     // Auth - no token required
     if (pathname === '/api/auth/login' && method === 'POST') {
+        if (loginRateLimitExceeded(req)) { json(res, { error: 'Too many login attempts. Please wait a minute and try again.' }, 429); return; }
         const { username, password, type } = b;
         if (!username || !password) { json(res, { error: 'Missing fields' }, 400); return; }
         const qText = type
@@ -196,27 +222,36 @@ async function handleApi(req, res, pathname) {
     }
 
     if (pathname === '/api/auth/register' && method === 'POST') {
-        const { username, password, fullName, email, telephone, type, rank, className, classes, subjects, registrationKey } = b;
+        const { username, password, fullName, email, telephone, type, rank, className, classes, subjects, registrationKey, canPrintResults } = b;
         if (!username || !password || !type) { json(res, { error: 'Missing fields' }, 400); return; }
         if (typeof username !== 'string' || username.trim().length < 3 || username.length > 100) { json(res, { error: 'Invalid username' }, 400); return; }
         if (typeof password !== 'string' || password.length < 8 || password.length > 128) { json(res, { error: 'Password must be 8-128 characters' }, 400); return; }
         if (!['student', 'lecturer', 'admin'].includes(type)) { json(res, { error: 'Invalid account type' }, 400); return; }
         const isAdminCaller = token?.type === 'admin';
         if (type === 'admin' && !isAdminCaller) { json(res, { error: 'Administrator accounts require authorization' }, 403); return; }
+        if (!isAdminCaller && canPrintResults !== undefined) { json(res, { error: 'Privileged fields cannot be set during public registration' }, 400); return; }
         const { rows: ex } = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
         if (ex.length) { json(res, { error: 'Username already exists' }, 409); return; }
+        let lecturerScopes = null;
         if (type === 'lecturer' && !isAdminCaller) {
             if (!registrationKey) { json(res, { error: 'Registration key required for lecturers' }, 400); return; }
-            const { rows: keys } = await pool.query('SELECT id FROM registration_keys WHERE key = $1', [registrationKey]);
+            const { rows: keys } = await pool.query(`
+                UPDATE registration_keys SET used_at = NOW()
+                WHERE key = $1 AND used_at IS NULL AND expires_at > NOW()
+                RETURNING classes, subjects
+            `, [registrationKey]);
             if (!keys.length) { json(res, { error: 'Invalid registration key' }, 401); return; }
+            lecturerScopes = keys[0];
         }
+        const assignments = getRegistrationAssignments(type, isAdminCaller, lecturerScopes, classes, subjects, className);
+        const { classes: assignedClasses, subjects: assignedSubjects, className: assignedClassName } = assignments;
         let classId = null;
-        if (className) { const { rows: cl } = await pool.query('SELECT id FROM classes WHERE name = $1', [className]); classId = cl[0]?.id || null; }
+        if (assignedClassName) { const { rows: cl } = await pool.query('SELECT id FROM classes WHERE name = $1', [assignedClassName]); classId = cl[0]?.id || null; }
         const hash = await bcrypt.hash(password, 10);
-        const classesArr = (classes && classes.length > 0) ? classes : (className ? [className] : []);
+        const classesArr = assignedClasses;
         const { rows } = await pool.query(
-            'INSERT INTO users (username,password_hash,full_name,email,telephone,type,rank,class_id,subjects,classes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,username,full_name,email,type',
-            [username, hash, fullName, email, telephone, type, rank, classId, subjects || [], classesArr]
+            'INSERT INTO users (username,password_hash,full_name,email,telephone,type,rank,class_id,subjects,classes,can_print_results) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id,username,full_name,email,type',
+            [username, hash, fullName, email, telephone, type, rank, classId, assignedSubjects, classesArr, isAdminCaller && canPrintResults === true]
         );
         json(res, { user: rows[0] }, 201); return;
     }
@@ -305,13 +340,23 @@ async function handleApi(req, res, pathname) {
     // Exams
     if (pathname === '/api/exams') {
         if (method === 'GET') {
-            const { rows: exams } = await pool.query('SELECT * FROM exams ORDER BY created_at DESC');
+            const { rows: allExams } = await pool.query('SELECT * FROM exams ORDER BY created_at DESC');
             const { rows: ec } = await pool.query('SELECT ec.exam_id, c.name FROM exam_classes ec JOIN classes c ON ec.class_id = c.id');
             const classMap = {}; ec.forEach(r => { if (!classMap[r.exam_id]) classMap[r.exam_id] = []; classMap[r.exam_id].push(r.name); });
+            let exams = allExams;
+            if (token.type === 'lecturer') exams = exams.filter(exam => exam.created_by === token.id);
+            if (token.type === 'student') {
+                const { rows: student } = await pool.query('SELECT c.name FROM users u LEFT JOIN classes c ON c.id = u.class_id WHERE u.id = $1', [token.id]);
+                const studentClass = student[0]?.name;
+                exams = exams.filter(exam => exam.is_general || (studentClass && (classMap[exam.id] || []).includes(studentClass)));
+            }
             if (q.minimal === 'true') { json(res, exams.map(e => ({ id: e.id, title: e.title, type: e.type, subject: e.subject, classes: classMap[e.id] || [], startTime: e.start_time, duration: e.duration, isActivated: e.is_activated, isManuallyActive: e.is_manually_active }))); return; }
-            if (token.type === 'student' && q.minimal !== 'true') { json(res, { error: 'Full examination questions are restricted' }, 403); return; }
-            const { rows: qs } = await pool.query('SELECT * FROM exam_questions ORDER BY question_order');
-            const qMap = {}; qs.forEach(q => { if (!qMap[q.exam_id]) qMap[q.exam_id] = []; qMap[q.exam_id].push({ id: q.id, type: q.question_type, question: q.question_text, options: q.options || [], correctAnswer: q.correct_answer, points: q.points, wordLimit: q.word_limit }); });
+            const openExamIds = token.type === 'student' ? exams.filter(exam => isExamOpen(exam)).map(exam => exam.id) : null;
+            const { rows: qs } = await pool.query(token.type === 'student'
+                ? 'SELECT * FROM exam_questions WHERE exam_id = ANY($1::uuid[]) ORDER BY question_order'
+                : 'SELECT * FROM exam_questions ORDER BY question_order',
+            token.type === 'student' ? [openExamIds] : []);
+            const qMap = {}; qs.forEach(q => { if (!qMap[q.exam_id]) qMap[q.exam_id] = []; qMap[q.exam_id].push({ id: q.id, type: q.question_type, question: q.question_text, options: q.options || [], ...(token.type === 'student' ? {} : { correctAnswer: q.correct_answer }), points: q.points, wordLimit: q.word_limit }); });
             json(res, exams.map(e => ({ id: e.id, title: e.title, type: e.type, subject: e.subject, classes: classMap[e.id] || [], startTime: e.start_time, duration: e.duration, isActivated: e.is_activated, isManuallyActive: e.is_manually_active, isWritten: e.is_written, isGeneral: e.is_general, createdBy: e.created_by, createdAt: e.created_at, questions: qMap[e.id] || [], randomizedQuestions: qMap[e.id] || [] }))); return;
         }
         if (method === 'POST') {
@@ -319,13 +364,39 @@ async function handleApi(req, res, pathname) {
             const client = await pool.connect();
             try {
                 await client.query('BEGIN');
+                let existingExam = null;
+                if (b.id) {
+                    const { rows } = await client.query('SELECT id, created_by FROM exams WHERE id = $1 FOR UPDATE', [b.id]);
+                    existingExam = rows[0];
+                    if (!existingExam) { await client.query('ROLLBACK'); json(res, { error: 'Exam not found' }, 404); return; }
+                    if (token.type === 'lecturer' && existingExam.created_by !== token.id) {
+                        await client.query('ROLLBACK');
+                        json(res, { error: 'Forbidden' }, 403);
+                        return;
+                    }
+                }
                 const classIds = [];
-                for (const name of (b.classes || [])) { const { rows } = await client.query('SELECT id FROM classes WHERE name = $1', [name]); if (rows[0]) classIds.push(rows[0].id); }
-                let createdBy = b.createdBy || b.lecturerId;
-                if (!createdBy || !/^[0-9a-f-]{36}$/.test(createdBy)) { const { rows } = await client.query('SELECT id FROM users WHERE username = $1', [token.username]); createdBy = rows[0]?.id || null; }
+                const classNames = Array.isArray(b.classes) ? b.classes : [];
+                if (classNames.some(name => typeof name !== 'string')) { await client.query('ROLLBACK'); json(res, { error: 'Invalid exam classes' }, 400); return; }
+                if (token.type === 'lecturer' && b.isGeneral === true) {
+                    await client.query('ROLLBACK');
+                    json(res, { error: 'Lecturers cannot create school-wide examinations' }, 403);
+                    return;
+                }
+                if (token.type === 'lecturer' && classNames.length) {
+                    const { rows: lecturer } = await client.query('SELECT classes FROM users WHERE id = $1', [token.id]);
+                    const assigned = new Set(lecturer[0]?.classes || []);
+                    if (classNames.some(name => !assigned.has(name))) {
+                        await client.query('ROLLBACK');
+                        json(res, { error: 'Exam includes classes outside your assignment' }, 403);
+                        return;
+                    }
+                }
+                for (const name of classNames) { const { rows } = await client.query('SELECT id FROM classes WHERE name = $1', [name]); if (rows[0]) classIds.push(rows[0].id); }
+                const createdBy = existingExam ? existingExam.created_by : token.id;
                 let savedExam;
                 const examData = [b.title, b.type, b.subject, b.startTime || new Date().toISOString(), b.duration || 60, b.isActivated !== false, b.isManuallyActive !== false, b.isWritten || false, b.isGeneral || false, createdBy];
-                if (b.id && /^[0-9a-f-]{36}$/.test(b.id)) { const { rows } = await client.query('UPDATE exams SET title=$1,type=$2,subject=$3,start_time=$4,duration=$5,is_activated=$6,is_manually_active=$7,is_written=$8,is_general=$9,created_by=$10 WHERE id=$11 RETURNING *', [...examData, b.id]); savedExam = rows[0]; }
+                if (existingExam) { const { rows } = await client.query('UPDATE exams SET title=$1,type=$2,subject=$3,start_time=$4,duration=$5,is_activated=$6,is_manually_active=$7,is_written=$8,is_general=$9 WHERE id=$10 RETURNING *', examData.slice(0, 9).concat(b.id)); savedExam = rows[0]; }
                 else { const { rows } = await client.query('INSERT INTO exams (title,type,subject,start_time,duration,is_activated,is_manually_active,is_written,is_general,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *', examData); savedExam = rows[0]; }
                 await client.query('DELETE FROM exam_classes WHERE exam_id = $1', [savedExam.id]);
                 for (const cid of classIds) await client.query('INSERT INTO exam_classes (exam_id,class_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [savedExam.id, cid]);
@@ -340,6 +411,7 @@ async function handleApi(req, res, pathname) {
     if (examMatch) {
         if (!['admin', 'lecturer'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; }
         const id = examMatch[1];
+        if (!await canManageExam(pool, token, id)) { json(res, { error: 'Forbidden' }, 403); return; }
         if (method === 'PUT') { const map = { title: 'title', type: 'type', subject: 'subject', startTime: 'start_time', duration: 'duration', isActivated: 'is_activated', isManuallyActive: 'is_manually_active', isWritten: 'is_written', isGeneral: 'is_general' }; const fields = [], values = []; let i = 1; for (const [k, col] of Object.entries(map)) if (b[k] !== undefined) { fields.push(`${col} = $${i++}`); values.push(b[k]); } if (!fields.length) { json(res, { id }); return; } values.push(id); const { rows } = await pool.query(`UPDATE exams SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`, values); json(res, rows[0]); return; }
         if (method === 'DELETE') { await pool.query('DELETE FROM exams WHERE id = $1', [id]); json(res, { success: true }); return; }
     }
@@ -352,32 +424,57 @@ async function handleApi(req, res, pathname) {
                 json(res, rows.map(r => ({ id:r.id, examId:r.exam_id, examTitle:r.exam_title, studentId:r.student_id, studentName:r.student_name, subject:r.subject, type:r.type, score:parseFloat(r.score), submittedAt:r.submitted_at, isReleased:r.is_released, answers:r.answers||[], questionDetails:r.question_details||[] }))); return;
             }
             if (!['admin','lecturer'].includes(token.type)) { json(res, { error:'Forbidden' }, 403); return; }
-            const { rows } = await pool.query('SELECT * FROM results ORDER BY submitted_at DESC'); json(res, rows.map(r => ({ id:r.id, examId:r.exam_id, examTitle:r.exam_title, studentId:r.student_id, studentName:r.student_name, subject:r.subject, type:r.type, score:parseFloat(r.score), submittedAt:r.submitted_at, isReleased:r.is_released, answers:r.answers||[], questionDetails:r.question_details||[] }))); return;
+            const { rows } = await pool.query(
+                token.type === 'admin'
+                    ? 'SELECT * FROM results ORDER BY submitted_at DESC'
+                    : 'SELECT r.* FROM results r JOIN exams e ON e.id = r.exam_id WHERE e.created_by = $1 ORDER BY r.submitted_at DESC',
+                token.type === 'admin' ? [] : [token.id]
+            );
+            json(res, rows.map(r => ({ id:r.id, examId:r.exam_id, examTitle:r.exam_title, studentId:r.student_id, studentName:r.student_name, subject:r.subject, type:r.type, score:parseFloat(r.score), submittedAt:r.submitted_at, isReleased:r.is_released, answers:r.answers||[], questionDetails:r.question_details||[] }))); return;
         }
         if (method === 'POST') {
-            if (!['student','admin','lecturer'].includes(token.type)) { json(res, { error:'Forbidden' }, 403); return; }
+            if (token.type !== 'student') { json(res, { error:'Only students may submit exam results' }, 403); return; }
             const r = b;
             if (!r.examId) { json(res, { error:'Exam required' }, 400); return; }
-            if (token.type === 'student') r.studentId = token.id;
-            // Block duplicate submissions — same student, same exam
-            if (r.examId && r.studentId && !r.isComposite) {
-                const { rows: existing } = await pool.query(
-                    'SELECT id FROM results WHERE exam_id = $1 AND student_id = $2 AND is_composite = false LIMIT 1',
-                    [r.examId, r.studentId]
+            const client = await pool.connect();
+            try {
+                await client.query('BEGIN');
+                const exam = await getEligibleExam(client, token.id, r.examId);
+                if (!exam) { await client.query('ROLLBACK'); json(res, { error:'Not eligible to submit this examination' }, 403); return; }
+                const { rows: existing } = await client.query(
+                    'SELECT id FROM results WHERE exam_id = $1 AND student_id = $2 AND is_composite = false LIMIT 1 FOR UPDATE',
+                    [r.examId, token.id]
                 );
-                if (existing.length) { json(res, { error: 'Exam already submitted' }, 409); return; }
-            }
-            const { rows } = await pool.query(
-                'INSERT INTO results (exam_id,exam_title,student_id,student_name,subject,type,score,correct_answers,total_questions,submitted_at,is_written,is_released,is_composite,composite_breakdown,security_report,answers,question_details) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *',
-                [r.examId, r.examTitle, r.studentId, r.studentName, r.subject, r.type, r.score, r.correctAnswers, r.totalQuestions, r.submittedAt || new Date().toISOString(), r.isWritten || false, r.isReleased || false, r.isComposite || false, r.compositeBreakdown ? JSON.stringify(r.compositeBreakdown) : null, r.securityReport ? JSON.stringify(r.securityReport) : null, JSON.stringify(r.answers || []), JSON.stringify(r.questionDetails || [])]
-            );
-            json(res, rows[0] || r, 201); return;
+                if (existing.length) { await client.query('ROLLBACK'); json(res, { error:'Exam already submitted' }, 409); return; }
+                const { rows: questions } = await client.query(
+                    'SELECT question_type, question_text, options, correct_answer, points FROM exam_questions WHERE exam_id = $1 ORDER BY question_order',
+                    [r.examId]
+                );
+                const grade = gradeObjectiveQuestions(questions, r.answers);
+                const { rows: student } = await client.query('SELECT full_name FROM users WHERE id = $1', [token.id]);
+                const { rows } = await client.query(
+                    `INSERT INTO results (exam_id,exam_title,student_id,student_name,subject,type,score,correct_answers,total_questions,submitted_at,is_written,is_released,is_composite,answers,question_details)
+                     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),$10,false,false,$11,$12) RETURNING *`,
+                    [exam.id, exam.title, token.id, student[0]?.full_name || '', exam.subject, exam.type,
+                        grade.score, grade.correctAnswers, grade.totalQuestions, exam.is_written,
+                        JSON.stringify(r.answers || []), JSON.stringify(grade.questionDetails)]
+                );
+                await client.query('COMMIT');
+                json(res, rows[0], 201);
+            } catch (error) {
+                await client.query('ROLLBACK');
+                throw error;
+            } finally { client.release(); }
+            return;
         }
     }
     const resultMatch = pathname.match(/^\/api\/results\/([^/]+)$/);
     if (resultMatch) {
         if (!['admin','lecturer'].includes(token.type)) { json(res, { error:'Forbidden' }, 403); return; }
         const id = resultMatch[1];
+        const { rows: resultOwner } = await pool.query('SELECT exam_id FROM results WHERE id = $1', [id]);
+        if (!resultOwner[0]) { json(res, { error: 'Result not found' }, 404); return; }
+        if (!await canManageExam(pool, token, resultOwner[0].exam_id)) { json(res, { error: 'Forbidden' }, 403); return; }
         if (method === 'PUT') { const fields = [], values = []; let i = 1; if (b.isReleased !== undefined) { fields.push(`is_released = $${i++}`); values.push(b.isReleased); } if (b.score !== undefined) { fields.push(`score = $${i++}`); values.push(b.score); } if (b.isWritten !== undefined) { fields.push(`is_written = $${i++}`); values.push(b.isWritten); } if (!fields.length) { json(res, { id }); return; } values.push(id); const { rows } = await pool.query(`UPDATE results SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`, values); json(res, rows[0]); return; }
         if (method === 'DELETE') { await pool.query('DELETE FROM results WHERE id = $1', [id]); json(res, { success: true }); return; }
     }
@@ -385,42 +482,99 @@ async function handleApi(req, res, pathname) {
     // Result releases
     if (pathname === '/api/result-releases') {
         if (!['admin', 'lecturer'].includes(token.type) && method !== 'GET') { json(res, { error: 'Forbidden' }, 403); return; }
-        if (method === 'GET') { const { rows } = await pool.query('SELECT * FROM result_releases'); const releases = {}; rows.forEach(r => { releases[r.exam_id] = r.is_released; }); json(res, releases); return; }
-        if (method === 'POST') { const { rows } = await pool.query('INSERT INTO result_releases (exam_id,is_released,released_at) VALUES ($1,$2,$3) ON CONFLICT (exam_id) DO UPDATE SET is_released=EXCLUDED.is_released,released_at=EXCLUDED.released_at RETURNING *', [b.examId, b.isReleased, b.isReleased ? new Date().toISOString() : null]); json(res, rows[0]); return; }
+        if (method === 'GET') {
+            const { rows } = await pool.query(token.type === 'admin'
+                ? 'SELECT * FROM result_releases'
+                : 'SELECT rr.* FROM result_releases rr JOIN exams e ON e.id = rr.exam_id WHERE e.created_by = $1',
+            token.type === 'admin' ? [] : [token.id]);
+            const releases = {}; rows.forEach(r => { releases[r.exam_id] = r.is_released; }); json(res, releases); return;
+        }
+        if (method === 'POST') {
+            if (!b.examId || typeof b.isReleased !== 'boolean') { json(res, { error: 'Exam and release status are required' }, 400); return; }
+            if (!await canManageExam(pool, token, b.examId)) { json(res, { error: 'Forbidden' }, 403); return; }
+            const { rows } = await pool.query('INSERT INTO result_releases (exam_id,is_released,released_at) VALUES ($1,$2,$3) ON CONFLICT (exam_id) DO UPDATE SET is_released=EXCLUDED.is_released,released_at=EXCLUDED.released_at RETURNING *', [b.examId, b.isReleased, b.isReleased ? new Date().toISOString() : null]);
+            await pool.query('UPDATE results SET is_released = $1 WHERE exam_id = $2', [b.isReleased, b.examId]);
+            json(res, rows[0]); return;
+        }
     }
 
     // Materials
     if (pathname === '/api/materials') {
         if (!['admin', 'lecturer'].includes(token.type) && method !== 'GET') { json(res, { error: 'Forbidden' }, 403); return; }
         if (method === 'GET') { const { rows } = await pool.query('SELECT m.*, c.name as class_name FROM materials m LEFT JOIN classes c ON m.class_id = c.id ORDER BY m.uploaded_at DESC'); json(res, rows.map(m => ({ id: m.id, title: m.title, description: m.description, content: m.content, fileUrl: m.file_url, fileName: m.file_name, uploadedFile: m.uploaded_file, subject: m.subject, class: m.class_name, lecturerId: m.uploaded_by, uploadedBy: m.uploaded_by, uploadedAt: m.uploaded_at }))); return; }
-        if (method === 'POST') { let classId = null; if (b.className) { const { rows: cl } = await pool.query('SELECT id FROM classes WHERE name = $1', [b.className]); classId = cl[0]?.id || null; } let uid = b.uploadedBy; if (!uid || !/^[0-9a-f-]{36}$/.test(uid)) { const { rows: u } = await pool.query('SELECT id FROM users WHERE username = $1', [token.username]); uid = u[0]?.id || null; } const { rows } = await pool.query('INSERT INTO materials (title,description,content,file_url,file_name,uploaded_file,subject,class_id,uploaded_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *', [b.title, b.description, b.content, b.fileUrl, b.fileName, b.uploadedFile, b.subject, classId, uid]); json(res, { ...rows[0], class: b.className }, 201); return; }
+        if (method === 'POST') { let classId = null; if (b.className) { const { rows: cl } = await pool.query('SELECT id FROM classes WHERE name = $1', [b.className]); classId = cl[0]?.id || null; } const { rows } = await pool.query('INSERT INTO materials (title,description,content,file_url,file_name,uploaded_file,subject,class_id,uploaded_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *', [b.title, b.description, b.content, b.fileUrl, b.fileName, b.uploadedFile, b.subject, classId, token.id]); json(res, { ...rows[0], class: b.className }, 201); return; }
     }
     if (pathname === '/api/materials/upload-signature') {
         const timestamp = Math.round(Date.now() / 1000);
         const folder = 'signals-lms';
         const sortedStr = `folder=${folder}&timestamp=${timestamp}`;
+        if (!['admin', 'lecturer'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; }
+        if (!process.env.CLOUDINARY_API_SECRET || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_CLOUD_NAME) { json(res, { error: 'Upload integration is not configured' }, 503); return; }
         const signature = crypto.createHash('sha256').update(sortedStr + process.env.CLOUDINARY_API_SECRET).digest('hex');
         json(res, { timestamp, signature, folder, apiKey: process.env.CLOUDINARY_API_KEY, cloudName: process.env.CLOUDINARY_CLOUD_NAME }); return;
     }
     const matMatch = pathname.match(/^\/api\/materials\/([^/]+)$/);
-    if (matMatch) { if (method === 'DELETE') { await pool.query('DELETE FROM materials WHERE id = $1', [matMatch[1]]); json(res, { success: true }); return; } }
+    if (matMatch && method === 'DELETE') {
+        if (!['admin', 'lecturer'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; }
+        const { rows } = await pool.query(
+            token.type === 'admin'
+                ? 'DELETE FROM materials WHERE id = $1 RETURNING id'
+                : 'DELETE FROM materials WHERE id = $1 AND uploaded_by = $2 RETURNING id',
+            token.type === 'admin' ? [matMatch[1]] : [matMatch[1], token.id]
+        );
+        if (!rows.length) { json(res, { error: 'Material not found or not authorized' }, 404); return; }
+        json(res, { success: true }); return;
+    }
 
     // Announcements
     if (pathname === '/api/announcements') {
         if (!['admin', 'lecturer'].includes(token.type) && method !== 'GET') { json(res, { error: 'Forbidden' }, 403); return; }
         if (method === 'GET') { const { rows: ann } = await pool.query('SELECT a.*, u.full_name as author_name FROM announcements a LEFT JOIN users u ON a.created_by = u.id ORDER BY a.created_at DESC'); const { rows: ac } = await pool.query('SELECT ac.announcement_id, c.name FROM announcement_classes ac JOIN classes c ON ac.class_id = c.id'); const classMap = {}; ac.forEach(r => { if (!classMap[r.announcement_id]) classMap[r.announcement_id] = []; classMap[r.announcement_id].push(r.name); }); json(res, ann.map(a => ({ id: a.id, title: a.title, message: a.message, content: a.message, type: a.type || 'general', target: a.type || 'general', createdBy: a.created_by, authorName: a.author_name || 'Admin', createdAt: a.created_at, targetClasses: classMap[a.id] || [], classes: classMap[a.id] || [] }))); return; }
-        if (method === 'POST') { const client = await pool.connect(); try { await client.query('BEGIN'); let cid = b.createdBy; if (!cid || !/^[0-9a-f-]{36}$/.test(cid)) { const { rows } = await client.query('SELECT id FROM users WHERE username = $1', [token.username]); cid = rows[0]?.id || null; } const { rows } = await client.query('INSERT INTO announcements (title,message,type,created_by) VALUES ($1,$2,$3,$4) RETURNING *', [b.title, b.message || b.content, b.type || 'general', cid]); if (b.targetClasses?.length) { for (const name of b.targetClasses) { const { rows: cl } = await client.query('SELECT id FROM classes WHERE name = $1', [name]); if (cl[0]) await client.query('INSERT INTO announcement_classes (announcement_id,class_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [rows[0].id, cl[0].id]); } } await client.query('COMMIT'); json(res, { ...rows[0], classes: b.targetClasses || [] }, 201); } catch (err) { await client.query('ROLLBACK'); json(res, { error: err.message }, 500); } finally { client.release(); } return; }
+        if (method === 'POST') { if (!['admin','lecturer'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; } const client = await pool.connect(); try { await client.query('BEGIN'); const { rows } = await client.query('INSERT INTO announcements (title,message,type,created_by) VALUES ($1,$2,$3,$4) RETURNING *', [b.title, b.message || b.content, b.type || 'general', token.id]); if (b.targetClasses?.length) { for (const name of b.targetClasses) { const { rows: cl } = await client.query('SELECT id FROM classes WHERE name = $1', [name]); if (cl[0]) await client.query('INSERT INTO announcement_classes (announcement_id,class_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [rows[0].id, cl[0].id]); } } await client.query('COMMIT'); json(res, { ...rows[0], classes: b.targetClasses || [] }, 201); } catch (err) { await client.query('ROLLBACK'); json(res, { error: 'Unable to create announcement' }, 500); } finally { client.release(); } return; }
     }
     const annMatch = pathname.match(/^\/api\/announcements\/([^/]+)$/);
-    if (annMatch) { if (method === 'DELETE') { await pool.query('DELETE FROM announcements WHERE id = $1', [annMatch[1]]); json(res, { success: true }); return; } }
+    if (annMatch && method === 'DELETE') {
+        const { rows } = await pool.query(
+            token.type === 'admin'
+                ? 'DELETE FROM announcements WHERE id = $1 RETURNING id'
+                : 'DELETE FROM announcements WHERE id = $1 AND created_by = $2 RETURNING id',
+            token.type === 'admin' ? [annMatch[1]] : [annMatch[1], token.id]
+        );
+        if (!rows.length) { json(res, { error: 'Announcement not found or not authorized' }, 404); return; }
+        json(res, { success: true }); return;
+    }
 
     // Notifications
     if (pathname === '/api/notifications') {
-        if (method === 'GET') { const { rows } = await pool.query('SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC', [q.userId]); json(res, rows.map(n => ({ id: n.id, userId: n.user_id, userType: n.user_type, type: n.type, title: n.title, message: n.message, link: n.link, data: n.data, read: n.read, createdAt: n.created_at }))); return; }
-        if (method === 'POST') { const { rows } = await pool.query('INSERT INTO notifications (user_id,user_type,type,title,message,link,data) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *', [b.userId, b.userType, b.type, b.title, b.message, b.link, b.data ? JSON.stringify(b.data) : null]); json(res, rows[0], 201); return; }
+        if (method === 'GET') {
+            const userId = token.type === 'admin' && q.userId ? q.userId : token.id;
+            if (token.type !== 'admin' && q.userId && q.userId !== token.id) { json(res, { error: 'Forbidden' }, 403); return; }
+            const { rows } = await pool.query('SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC', [userId]);
+            json(res, rows.map(n => ({ id: n.id, userId: n.user_id, userType: n.user_type, type: n.type, title: n.title, message: n.message, link: n.link, data: n.data, read: n.read, createdAt: n.created_at }))); return;
+        }
+        if (method === 'POST') {
+            if (!['admin', 'lecturer'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; }
+            const { rows: recipient } = await pool.query('SELECT id,type,class_id FROM users WHERE id = $1', [b.userId]);
+            if (!recipient[0]) { json(res, { error: 'Recipient not found' }, 404); return; }
+            if (token.type === 'lecturer') {
+                const { rows: assigned } = await pool.query(`
+                    SELECT 1 FROM users lecturer JOIN classes c ON c.name = ANY(lecturer.classes)
+                    WHERE lecturer.id = $1 AND c.id = $2 AND $3 = 'student'
+                `, [token.id, recipient[0].class_id, recipient[0].type]);
+                if (!assigned.length) { json(res, { error: 'Recipient is outside your assigned classes' }, 403); return; }
+            }
+            const { rows } = await pool.query('INSERT INTO notifications (user_id,user_type,type,title,message,link,data) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *', [b.userId, recipient[0].type, b.type, b.title, b.message, b.link, b.data ? JSON.stringify(b.data) : null]); json(res, rows[0], 201); return;
+        }
     }
     const notifMatch = pathname.match(/^\/api\/notifications\/([^/]+)$/);
-    if (notifMatch) { if (method === 'PUT') { await pool.query('UPDATE notifications SET read = true WHERE id = $1', [notifMatch[1]]); json(res, { success: true }); return; } }
+    if (notifMatch && method === 'PUT') {
+        const { rows } = await pool.query(token.type === 'admin'
+            ? 'UPDATE notifications SET read = true WHERE id = $1 RETURNING id'
+            : 'UPDATE notifications SET read = true WHERE id = $1 AND user_id = $2 RETURNING id',
+        token.type === 'admin' ? [notifMatch[1]] : [notifMatch[1], token.id]);
+        if (!rows.length) { json(res, { error: 'Notification not found or not authorized' }, 404); return; }
+        json(res, { success: true }); return;
+    }
 
     // Settings
     if (pathname === '/api/settings') {
@@ -432,15 +586,19 @@ async function handleApi(req, res, pathname) {
     // Written marks
     if (pathname === '/api/written-marks') {
         if (!['admin', 'lecturer'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; }
-        if (method === 'GET') { const { rows } = await pool.query('SELECT * FROM written_marks'); const marks = {}; rows.forEach(m => { const key = m.subject ? `${m.subject}_${m.class_name}` : `general_${m.class_name}`; if (!marks[key]) marks[key] = {}; if (!marks[key][m.exam_type]) marks[key][m.exam_type] = {}; marks[key][m.exam_type][m.student_id] = parseFloat(m.mark); }); json(res, marks); return; }
-        if (method === 'POST') { const { rows } = await pool.query('INSERT INTO written_marks (subject,class_name,exam_type,student_id,mark) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (subject,class_name,exam_type,student_id) DO UPDATE SET mark=EXCLUDED.mark RETURNING *', [b.subject, b.className, b.examType, b.studentId, b.mark]); json(res, rows[0]); return; }
+        if (method === 'GET') { const { rows } = await pool.query(token.type === 'admin'
+            ? 'SELECT * FROM written_marks'
+            : `SELECT * FROM written_marks WHERE class_name = ANY((SELECT classes FROM users WHERE id = $1))
+               AND subject = ANY((SELECT subjects FROM users WHERE id = $1))`,
+        token.type === 'admin' ? [] : [token.id]); const marks = {}; rows.forEach(m => { const key = m.subject ? `${m.subject}_${m.class_name}` : `general_${m.class_name}`; if (!marks[key]) marks[key] = {}; if (!marks[key][m.exam_type]) marks[key][m.exam_type] = {}; marks[key][m.exam_type][m.student_id] = parseFloat(m.mark); }); json(res, marks); return; }
+        if (method === 'POST') { if (token.type === 'lecturer') { const { rows: assigned } = await pool.query('SELECT 1 FROM users WHERE id=$1 AND $2=ANY(classes) AND $3=ANY(subjects)', [token.id, b.className, b.subject]); if (!assigned.length) { json(res, { error: 'Mark is outside your assigned classes or subjects' }, 403); return; } } const { rows } = await pool.query('INSERT INTO written_marks (subject,class_name,exam_type,student_id,mark) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (subject,class_name,exam_type,student_id) DO UPDATE SET mark=EXCLUDED.mark RETURNING *', [b.subject, b.className, b.examType, b.studentId, b.mark]); json(res, rows[0]); return; }
     }
 
     // Registration keys
     if (pathname === '/api/registration-keys') {
         if (token.type !== 'admin') { json(res, { error: 'Forbidden' }, 403); return; }
-        if (method === 'GET') { const { rows } = await pool.query('SELECT * FROM registration_keys ORDER BY created_at DESC'); json(res, rows.map(k => ({ key: k.key, createdAt: k.created_at }))); return; }
-        if (method === 'POST') { const { rows } = await pool.query('INSERT INTO registration_keys (key) VALUES ($1) ON CONFLICT DO NOTHING RETURNING *', [b.key]); json(res, rows[0], 201); return; }
+        if (method === 'GET') { const { rows } = await pool.query('SELECT * FROM registration_keys ORDER BY created_at DESC'); json(res, rows.map(k => ({ key: k.key, classes: k.classes || [], subjects: k.subjects || [], createdAt: k.created_at, expiresAt: k.expires_at, usedAt: k.used_at }))); return; }
+        if (method === 'POST') { if (typeof b.key !== 'string' || b.key.length < 16 || b.key.length > 100) { json(res, { error: 'Registration key must be 16-100 characters' }, 400); return; } if (!Array.isArray(b.classes) || !Array.isArray(b.subjects) || b.classes.some(value => typeof value !== 'string') || b.subjects.some(value => typeof value !== 'string')) { json(res, { error: 'Registration key requires assigned class and subject lists' }, 400); return; } const { rows } = await pool.query('INSERT INTO registration_keys (key,classes,subjects,expires_at) VALUES ($1,$2,$3,NOW()+INTERVAL \'7 days\') ON CONFLICT (key) DO UPDATE SET classes=EXCLUDED.classes,subjects=EXCLUDED.subjects,expires_at=NOW()+INTERVAL \'7 days\',used_at=NULL RETURNING id,key,classes,subjects,created_at,expires_at', [b.key,b.classes,b.subjects]); json(res, rows[0], 201); return; }
         if (method === 'DELETE') { await pool.query('DELETE FROM registration_keys WHERE key = $1', [b.key]); json(res, { success: true }); return; }
     }
 
@@ -455,9 +613,38 @@ async function handleApi(req, res, pathname) {
     if (pathname === '/api/submissions') {
         if (method === 'POST' && token.type !== 'student') { json(res, { error: 'Forbidden' }, 403); return; }
         if (method === 'PUT' && !['admin', 'lecturer'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; }
-        if (method === 'GET') { const url = q.assignmentId ? 'SELECT * FROM submissions WHERE assignment_id = $1 ORDER BY submitted_at DESC' : 'SELECT * FROM submissions ORDER BY submitted_at DESC'; const { rows } = await pool.query(url, q.assignmentId ? [q.assignmentId] : []); json(res, rows); return; }
+        if (method === 'GET') {
+            let query;
+            let values;
+            if (token.type === 'admin') {
+                query = q.assignmentId ? 'SELECT * FROM submissions WHERE assignment_id = $1 ORDER BY submitted_at DESC' : 'SELECT * FROM submissions ORDER BY submitted_at DESC';
+                values = q.assignmentId ? [q.assignmentId] : [];
+            } else if (token.type === 'student') {
+                query = q.assignmentId ? 'SELECT * FROM submissions WHERE assignment_id = $1 AND student_id = $2 ORDER BY submitted_at DESC' : 'SELECT * FROM submissions WHERE student_id = $1 ORDER BY submitted_at DESC';
+                values = q.assignmentId ? [q.assignmentId, token.id] : [token.id];
+            } else if (token.type === 'lecturer') {
+                query = `SELECT s.* FROM submissions s JOIN users student ON student.id = s.student_id
+                    JOIN classes c ON c.id = student.class_id
+                    WHERE c.name = ANY((SELECT classes FROM users WHERE id = $${q.assignmentId ? 2 : 1}))
+                    ${q.assignmentId ? 'AND s.assignment_id = $1' : ''}
+                    ORDER BY s.submitted_at DESC`;
+                values = q.assignmentId ? [q.assignmentId, token.id] : [token.id];
+            } else { json(res, { error: 'Forbidden' }, 403); return; }
+            const { rows } = await pool.query(query, values); json(res, rows); return;
+        }
         if (method === 'POST') { if (!b.assignmentId) { json(res, { error: 'Assignment required' }, 400); return; } const { rows } = await pool.query('INSERT INTO submissions (assignment_id,student_id,content,file_url) VALUES ($1,$2,$3,$4) RETURNING *', [b.assignmentId, token.id, b.content, b.fileUrl]); json(res, rows[0], 201); return; }
-        if (method === 'PUT') { const { rows } = await pool.query('UPDATE submissions SET grade=$1,feedback=$2 WHERE id=$3 RETURNING *', [b.grade, b.feedback, b.id]); json(res, rows[0]); return; }
+        if (method === 'PUT') {
+            const { rows } = await pool.query(token.type === 'admin'
+                ? 'UPDATE submissions SET grade=$1,feedback=$2 WHERE id=$3 RETURNING *'
+                : `UPDATE submissions SET grade=$1,feedback=$2 WHERE id=$3 AND EXISTS (
+                    SELECT 1 FROM users student JOIN classes c ON c.id = student.class_id
+                    WHERE student.id = submissions.student_id
+                    AND c.name = ANY((SELECT classes FROM users WHERE id=$4))
+                ) RETURNING *`,
+            token.type === 'admin' ? [b.grade, b.feedback, b.id] : [b.grade, b.feedback, b.id, token.id]);
+            if (!rows.length) { json(res, { error: 'Submission not found or not authorized' }, 404); return; }
+            json(res, rows[0]); return;
+        }
     }
 
     json(res, { error: 'Not found' }, 404);
@@ -466,6 +653,7 @@ async function handleApi(req, res, pathname) {
 // ---- main server ----
 const PORT = 3000;
 const server = createServer(async (req, res) => {
+    applyCors(req, res);
     const url = new URL(req.url, `http://localhost:${PORT}`);
     const pathname = url.pathname;
 

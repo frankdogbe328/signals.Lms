@@ -1,57 +1,50 @@
-# Security Remediation Report
+# Signals LMS Security Remediation Report
 
-## Executive summary
+## Status
 
-The remediated application now removes known JWT fallbacks, requires a strong production JWT secret, enables secure database TLS verification by default, rejects plaintext password credentials, prevents public administrator/unauthorized role assignment, removes password fields from API user transforms, and adds backend role checks in both Vercel and local-server implementations.
+This second-pass report separates implemented code changes from work that remains dependent on production configuration or database-backed verification. The changes are on `security-remediation-pass-2`; they have not been deployed.
 
-## High-risk findings and fixes
+## Implemented in this branch
 
-| Vulnerability | Severity | Affected areas | Fix |
-|---|---|---|---|
-| Known JWT fallback secrets | Critical | `api/_auth.js`, `dev-server.js` | Removed known fallbacks; production/startup requires `JWT_SECRET` and a 32-character minimum. Development uses a process-ephemeral secret only when not configured. |
-| Password hashes and plaintext credentials | Critical | API login/user responses, login flow, migration logic | Login requires bcrypt hashes; user responses omit password fields; Supabase migration ignores non-bcrypt credentials. |
-| Public administrator privilege assignment | Critical | Authentication registration routes | Public registration rejects `admin`; lecturer registration requires a valid key or administrator authorization. |
-| Missing user-management authorization | High | Vercel/local users routes | User listing and privileged mutations require administrator authorization; self updates require ownership. |
-| Insecure database TLS verification | High | `api/_db.js`, `dev-server.js` | Certificate verification is enabled by default; disabling it requires explicit configuration. |
-| Unrestricted academic mutations | High | Exams/results/submissions/materials/announcements/settings/keys/audit routes | Added role checks and ownership restrictions in both implementations. |
-| Backup exposing password data | High | Vercel backup route | Backup selects profile columns only for `users`, excluding password hashes. |
-| Unsafe default credentials/documentation | High | README, sample initialization, login UI | Removed known administrator credentials and lecturer key from source/documentation. |
+| Area | Severity | Implemented fix |
+|---|---|---|
+| Result integrity | Critical | Students can only submit their own result. The backend obtains exam questions and student identity from PostgreSQL, calculates objective scores, generates question details, and forces `is_released=false`. Client score, correct-answer count, result identity, title, type, and release fields are not used as authoritative values. Duplicate submissions are checked inside a transaction. |
+| Exam eligibility | High | Student result submissions require an active exam and an assigned class or general-exam access. Scheduled start/end time is enforced unless the exam is explicitly manually activated. |
+| Exam ownership | Critical | New exam ownership is derived from the authenticated token. Updating an existing exam via POST locks and checks the existing record; lecturers may only update their own exam, and ownership is preserved. The same applies to associated questions and class assignments. |
+| Result and release management | High | Lecturers may manage results/releases only for exams they own; administrators retain system-wide access. Publishing/unpublishing synchronizes result release flags. |
+| Materials | High | Material creation records the authenticated uploader. Deletion is restricted to administrators or the owning lecturer in both server implementations. Upload signing is restricted to administrators/lecturers and returns a safe configuration error when Cloudinary is not configured. |
+| Notifications | High | Students cannot create notifications for other recipients. Administrators may create notifications; lecturers are limited to students in their assigned classes. Read updates are restricted to the recipient or an administrator. |
+| Local API parity | High | Added login rate limiting, role-based exam/result/material/announcement/notification checks, class-scoped submission retrieval/grading for lecturers, student-owned submission access, and secure upload-signature access. |
+| Registration | High | Public registration cannot set `canPrintResults` or self-assign lecturer classes/subjects. Administrators issue cryptographically random, one-use keys with explicit class/subject scopes; keys expire after seven days. Existing keys receive an expiry based on their original creation time and migrate with empty scopes; existing administrator rows are not deleted or changed. |
+| Initial administrator | High | Removed the predefined admin insert/hash from `schema.sql`. Added `npm run provision-admin`, which creates a bcrypt-hashed admin only when the requested username is unused and never replaces an existing account. |
+| CORS and lockfile | Medium | Wildcard CORS was removed. Cross-origin access requires an exact `CORS_ALLOWED_ORIGINS` allowlist. `.gitignore` no longer ignores `package-lock.json`. |
 
-## Modified files
+## Files changed in this pass
 
-- `api/_auth.js`: shared JWT secret validation and verification behavior.
-- `api/_db.js`: required database URL and secure TLS defaults.
-- `api/[...path].js`: password exposure, registration, user, exam, result, submission, administrative route authorization and backup sanitization.
-- `dev-server.js`: consistent JWT/database behavior and local route authorization/password handling.
-- `js/migrate-data.js`: rejects plaintext credentials and migrates only bcrypt values.
-- `js/app.js`: removed local sample admin password.
-- `js/init-sample-data.js`: removed default lecturer key and credentials.
-- `js/admin-dashboard.js`: removed password prefill and in-memory password assignment.
-- `js/lecturer-auth.js`: removed in-memory password assignment.
-- `js/student-auth.js`: removed in-memory password assignment.
-- `admin/login.html`: removed public default credential text.
-- `README.md`: updated backend, environment, credential, and setup documentation.
-- `.env.example`: documents required environment variables without real secrets.
-- `test/smoke.test.js`: added invalid-token and public-admin registration checks and password-field assertions.
-- `package.json`: corrected test script for Node test discovery.
+- `api/_security.js`: shared exam ownership, eligibility, and backend grading helpers.
+- `api/[...path].js`: result integrity, exam ownership, result management scope, materials and announcement ownership, notification authorization, submission scope, privileged registration fields, and scoped one-time registration keys.
+- `dev-server.js`: parity for the above authorization controls, local login rate limiting, multipart body handling, role-scoped submissions, local CORS, and scoped one-time keys.
+- `api/_cors.js`: exact configured CORS origin allowlist; no wildcard credentials.
+- `schema.sql`: removed default admin credentials, safely adds registration-key expiry/use/scope columns, and adds ownership indexes.
+- `js/admin-dashboard.js`, `js/api-service.js`: scoped, cryptographically random lecturer key generation and submission.
+- `scripts/provision-admin.js`: secure non-destructive initial admin provisioning.
+- `package.json`: provisioning script and unit/integration test command support.
+- `.gitignore`: allows npm package lockfile tracking.
+- `.env.example`: documents the optional exact-origin CORS allowlist.
+- `README.md`: secure admin setup, CORS allowlist, registration-key policy, and test prerequisites.
+- `test/security.unit.test.js`: deterministic grading, ownership, exam eligibility, and registration-scope tests.
+- `test/smoke.test.js`: optional live-server authorization tests for student/lecturer/admin role behavior.
+- `SECURITY_REMEDIATION.md`: updated status and remaining limitations.
 
 ## Verification
 
-- JavaScript syntax checks: **PASS** for modified JavaScript files.
-- `npm ci`: **PASS**; dependencies restored from the lockfile.
-- `npm run build`: **PASS** (Vite production build completed; only existing bundling warnings for classic scripts).
-- `npm test`: **NOT RUN SUCCESSFULLY** because no API server was running; all smoke tests were cancelled after the suite could not connect to `http://localhost:3000`.
-- Database-backed tests: **NOT RUN** because no database/environment was available in this session.
+Verification completed: JavaScript syntax checks, `npm test`, `npm run build`, and `git diff --check` passed. The deterministic unit suite passed. Live API smoke tests were skipped because no dedicated test server/database and role/resource fixtures were configured. The live smoke suite is intentionally gated behind `RUN_API_TESTS=1`; role-specific cases require student and lecturer test credentials/tokens in addition to administrator credentials. Do not run mutation tests against production.
 
-## Remaining limitations
+## Outstanding limitations
 
-- Resource-level lecturer ownership checks remain incomplete for every academic route and may require a per-resource data-model review.
-- Examination timing, attempt, and submission enforcement still need database-backed integration tests.
-- Legacy plaintext password records require an explicit migration/recovery procedure and cannot authenticate under the remediated login logic.
-- Cloudinary and Resend integrations require valid server-side environment variables.
-- A full dependency audit reported 6 npm vulnerabilities; upgrading requires compatibility review and is not included in this security remediation.
-- Production deployment was not performed.
-
-## Deployment requirements
-
-Set `DATABASE_URL` and `JWT_SECRET` (at least 32 characters) before startup. Configure Cloudinary variables only if uploads are enabled. Configure `RESEND_API_KEY` and `RESEND_FROM` only if result-release email is enabled. Provision the initial administrator and lecturer keys through a secure manual database process; do not use public registration for privileged accounts.
+- Database-backed route tests for actual lecturer-owned/other-owned exam and material records still require a dedicated test database and fixtures.
+- Public lecturer registration now takes its class and subject assignments exclusively from the one-use key. Legacy keys migrate with empty scopes, so administrators must issue new scoped keys; end-to-end testing of this flow still requires the dedicated test database.
+- Assignment records have no persistent ownership relation in the current schema. Lecturer submission reads and grading are therefore scoped to students in the lecturer's assigned classes, not to an assignment-owner record. A normalized assignments table is needed for exact per-assignment authorization.
+- Essay/written questions remain pending manual grading; the student cannot provide an authoritative score. Authorized lecturer/admin grading is still a trusted manual operation.
+- Local in-memory rate limiting is per process and is not a distributed limiter.
+- Existing third-party integration and deployment configuration still require operator verification. No deployment was performed.
