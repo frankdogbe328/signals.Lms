@@ -479,13 +479,11 @@ async function performPasswordReset(userType, userId, newPassword) {
             if (userType === 'student') {
                 const student = users.students.find(s => s && s.id === userId);
                 if (student) {
-                    student.password = newPassword;
                     userFound = true;
                 }
             } else if (userType === 'lecturer') {
                 const lecturer = users.lecturers.find(l => l && l.id === userId);
                 if (lecturer) {
-                    lecturer.password = newPassword;
                     userFound = true;
                 }
             }
@@ -2150,7 +2148,7 @@ window.handleEditUser = async function(userType, userId) {
     document.getElementById('addUserRank').value = user.rank || '';
     document.getElementById('addUserFullName').value = user.fullName || user.full_name || '';
     document.getElementById('addUserUsername').value = user.username || '';
-    document.getElementById('addUserPassword').value = user.password || '';
+    document.getElementById('addUserPassword').value = '';
     document.getElementById('addUserTelephone').value = user.telephone || '';
     document.getElementById('addUserEmail').value = user.email || '';
     

@@ -333,7 +333,6 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             
             // Reset password
-            student.password = newPassword;
             
             // Update in Supabase or localStorage
             if (typeof updateUser === 'function') {

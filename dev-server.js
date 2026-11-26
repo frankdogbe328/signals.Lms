@@ -23,12 +23,25 @@ try {
     });
 } catch {}
 
+if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL is required');
+}
 const isLocal = (process.env.DATABASE_URL || '').includes('localhost');
+const ssl = isLocal
+    ? (process.env.PGSSL_REJECT_UNAUTHORIZED === 'false' ? { rejectUnauthorized: false } : undefined)
+    : (process.env.PGSSL_REJECT_UNAUTHORIZED === 'false'
+        ? { rejectUnauthorized: false }
+        : { rejectUnauthorized: true });
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ...(isLocal ? {} : { ssl: { rejectUnauthorized: false } })
+    ...(ssl ? { ssl } : {})
 });
-const JWT_SECRET = process.env.JWT_SECRET || 'lms_dev_secret';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+    if (process.env.NODE_ENV === 'production') throw new Error('JWT_SECRET is required in production');
+}
+const DEV_JWT_SECRET = JWT_SECRET || crypto.randomBytes(48).toString('base64');
+if (JWT_SECRET && JWT_SECRET.length < 32) throw new Error('JWT_SECRET must be at least 32 characters');
 
 // ---- uploads folder ----
 const UPLOADS_DIR = join(__dirname, 'uploads');
@@ -43,7 +56,7 @@ function json(res, data, status = 200) {
 function verifyToken(req) {
     const auth = req.headers.authorization;
     if (!auth?.startsWith('Bearer ')) return null;
-    try { return jwt.verify(auth.slice(7), JWT_SECRET); } catch { return null; }
+    try { return jwt.verify(auth.slice(7), DEV_JWT_SECRET); } catch { return null; }
 }
 
 async function body(req) {
@@ -55,7 +68,7 @@ async function body(req) {
 }
 
 function transformUser(u) {
-    return { id: u.id, username: u.username, password: u.password_hash, fullName: u.full_name, email: u.email, telephone: u.telephone, type: u.type, rank: u.rank, class: u.class_name, classId: u.class_id, subjects: u.subjects || [], classes: u.classes || [], canPrintResults: u.can_print_results, createdAt: u.created_at };
+    return { id: u.id, username: u.username, fullName: u.full_name, email: u.email, telephone: u.telephone, type: u.type, rank: u.rank, class: u.class_name, classId: u.class_id, subjects: u.subjects || [], classes: u.classes || [], canPrintResults: u.can_print_results, createdAt: u.created_at };
 }
 
 // ---- static file server ----
@@ -117,21 +130,24 @@ async function handleApi(req, res, pathname) {
         const { rows } = await pool.query(qText, type ? [username, type] : [username]);
         const user = rows[0];
         if (!user) { json(res, { error: 'Invalid username or password' }, 401); return; }
-        const isHashed = user.password_hash.startsWith('$2');
-        const match = isHashed ? await bcrypt.compare(password, user.password_hash) : user.password_hash === password;
+        const isHashed = /^\$2[aby]\$/.test(user.password_hash || '');
+        if (!isHashed) { json(res, { error: 'Invalid username or password' }, 401); return; }
+        const match = await bcrypt.compare(password, user.password_hash);
         if (!match) { json(res, { error: 'Invalid username or password' }, 401); return; }
-        const tok = jwt.sign({ id: user.id, type: user.type, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
+        const tok = jwt.sign({ id: user.id, type: user.type, username: user.username }, DEV_JWT_SECRET, { expiresIn: '7d' });
         json(res, { token: tok, user: transformUser(user) }); return;
     }
 
     // Local file upload — saves to uploads/ folder on this machine
     if (pathname === '/api/upload' && method === 'POST') {
         if (!token) { json(res, { error: 'Unauthorized' }, 401); return; }
+        if (!['admin', 'lecturer'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; }
         const chunks = [];
         req.on('data', c => chunks.push(c));
         req.on('end', () => {
             try {
                 const buf = Buffer.concat(chunks);
+                if (buf.length > 20 * 1024 * 1024) { json(res, { error: 'File too large' }, 413); return; }
                 const ct = req.headers['content-type'] || '';
                 const boundary = ct.split('boundary=')[1];
                 if (!boundary) { json(res, { error: 'No boundary' }, 400); return; }
@@ -182,9 +198,14 @@ async function handleApi(req, res, pathname) {
     if (pathname === '/api/auth/register' && method === 'POST') {
         const { username, password, fullName, email, telephone, type, rank, className, classes, subjects, registrationKey } = b;
         if (!username || !password || !type) { json(res, { error: 'Missing fields' }, 400); return; }
+        if (typeof username !== 'string' || username.trim().length < 3 || username.length > 100) { json(res, { error: 'Invalid username' }, 400); return; }
+        if (typeof password !== 'string' || password.length < 8 || password.length > 128) { json(res, { error: 'Password must be 8-128 characters' }, 400); return; }
+        if (!['student', 'lecturer', 'admin'].includes(type)) { json(res, { error: 'Invalid account type' }, 400); return; }
+        const isAdminCaller = token?.type === 'admin';
+        if (type === 'admin' && !isAdminCaller) { json(res, { error: 'Administrator accounts require authorization' }, 403); return; }
         const { rows: ex } = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
         if (ex.length) { json(res, { error: 'Username already exists' }, 409); return; }
-        if (type === 'lecturer') {
+        if (type === 'lecturer' && !isAdminCaller) {
             if (!registrationKey) { json(res, { error: 'Registration key required for lecturers' }, 400); return; }
             const { rows: keys } = await pool.query('SELECT id FROM registration_keys WHERE key = $1', [registrationKey]);
             if (!keys.length) { json(res, { error: 'Invalid registration key' }, 401); return; }
@@ -205,6 +226,7 @@ async function handleApi(req, res, pathname) {
 
     // Users
     if (pathname === '/api/users' && method === 'GET') {
+        if (token.type !== 'admin') { json(res, { error: 'Forbidden' }, 403); return; }
         const { rows } = await pool.query('SELECT u.*, c.name as class_name FROM users u LEFT JOIN classes c ON u.class_id = c.id ORDER BY u.created_at DESC');
         json(res, { students: rows.filter(u => u.type === 'student').map(transformUser), lecturers: rows.filter(u => u.type === 'lecturer').map(transformUser), admin: transformUser(rows.find(u => u.type === 'admin') || {}) }); return;
     }
@@ -212,13 +234,21 @@ async function handleApi(req, res, pathname) {
     const userMatch = pathname.match(/^\/api\/users\/([^/]+)$/);
     if (userMatch) {
         const id = userMatch[1];
+        const { rows: targets } = await pool.query('SELECT id,type FROM users WHERE id = $1', [id]);
+        if (!targets[0]) { json(res, { error: 'User not found' }, 404); return; }
+        if (token.type !== 'admin' && token.id !== id) { json(res, { error: 'Forbidden' }, 403); return; }
         if (method === 'PUT') {
-            const { username, fullName, email, telephone, rank, subjects, classes, password, className, canPrintResults } = b;
+            const { username, fullName, email, telephone, rank, subjects, classes, password, className, canPrintResults, type, accountStatus } = b;
+            if (type !== undefined && token.type !== 'admin') { json(res, { error: 'Account type cannot be changed' }, 403); return; }
+            if (type !== undefined && token.id === id) { json(res, { error: 'Cannot change your own account type' }, 403); return; }
+            if (accountStatus !== undefined) { json(res, { error: 'Protected account fields cannot be changed' }, 403); return; }
+            if (canPrintResults !== undefined && token.type !== 'admin') { json(res, { error: 'Protected account fields cannot be changed' }, 403); return; }
             let classId = undefined;
             if (className !== undefined) { const { rows } = await pool.query('SELECT id FROM classes WHERE name = $1', [className]); classId = rows[0]?.id || null; }
             const updates = [], values = []; let i = 1;
             const add = (col, val) => { updates.push(`${col} = $${i++}`); values.push(val); };
             if (username !== undefined) add('username', username);
+            if (type !== undefined && ['student','lecturer','admin'].includes(type)) add('type', type);
             if (fullName !== undefined) add('full_name', fullName);
             if (email !== undefined) add('email', email);
             if (telephone !== undefined) add('telephone', telephone);
@@ -227,23 +257,28 @@ async function handleApi(req, res, pathname) {
             if (classes !== undefined) add('classes', classes);
             if (canPrintResults !== undefined) add('can_print_results', canPrintResults);
             if (classId !== undefined) add('class_id', classId);
-            if (password) add('password_hash', await bcrypt.hash(password, 10));
+            if (password !== undefined) {
+                if (typeof password !== 'string' || password.length < 8 || password.length > 128) { json(res, { error: 'Password must be 8-128 characters' }, 400); return; }
+                add('password_hash', await bcrypt.hash(password, 10));
+            }
             if (!updates.length) { json(res, { id }); return; }
             values.push(id);
-            const { rows } = await pool.query(`UPDATE users SET ${updates.join(', ')} WHERE id = $${i} RETURNING *`, values);
-            json(res, rows[0]); return;
+            const { rows } = await pool.query(`UPDATE users SET ${updates.join(', ')} WHERE id = $${i} RETURNING id,username,full_name,email,telephone,type,rank,class_id,subjects,classes,can_print_results,created_at`, values);
+            const u = rows[0];
+            json(res, u ? transformUser(u) : { id }); return;
         }
-        if (method === 'DELETE') { await pool.query('DELETE FROM users WHERE id = $1', [id]); json(res, { success: true }); return; }
+        if (method === 'DELETE') { if (token.type !== 'admin') { json(res, { error: 'Forbidden' }, 403); return; } await pool.query('DELETE FROM users WHERE id = $1', [id]); json(res, { success: true }); return; }
     }
 
     // Classes — GET is public (needed for registration dropdowns)
     if (pathname === '/api/classes') {
         if (method === 'GET') { const { rows } = await pool.query('SELECT * FROM classes ORDER BY name'); json(res, rows); return; }
-        if (method === 'POST') { const { rows } = await pool.query('INSERT INTO classes (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING *', [b.name]); json(res, rows[0], 201); return; }
+        if (method === 'POST') { if (token.type !== 'admin') { json(res, { error: 'Forbidden' }, 403); return; } const { rows } = await pool.query('INSERT INTO classes (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING *', [b.name]); json(res, rows[0], 201); return; }
     }
     const classMatch = pathname.match(/^\/api\/classes\/([^/]+)$/);
     if (classMatch) {
         const id = classMatch[1];
+        if (token.type !== 'admin') { json(res, { error: 'Forbidden' }, 403); return; }
         if (method === 'PUT') { const { rows } = await pool.query('UPDATE classes SET name = $1 WHERE id = $2 RETURNING *', [b.name, id]); json(res, rows[0]); return; }
         if (method === 'DELETE') { await pool.query('DELETE FROM classes WHERE id = $1', [id]); json(res, { success: true }); return; }
     }
@@ -252,6 +287,7 @@ async function handleApi(req, res, pathname) {
     if (pathname === '/api/courses') {
         if (method === 'GET') { const { rows } = await pool.query('SELECT c.*, cl.name as class_name FROM courses c LEFT JOIN classes cl ON c.class_id = cl.id ORDER BY c.subject'); json(res, rows.map(c => ({ id: c.id, subject: c.subject, class: c.class_name, lecturerId: c.lecturer_id, createdAt: c.created_at }))); return; }
         if (method === 'POST') {
+            if (token.type !== 'admin') { json(res, { error: 'Forbidden' }, 403); return; }
             let classId = null;
             if (b.className) { const { rows: cl } = await pool.query('SELECT id FROM classes WHERE name = $1', [b.className]); classId = cl[0]?.id || null; }
             const { rows } = await pool.query('INSERT INTO courses (subject, class_id) VALUES ($1, $2) RETURNING *', [b.subject, classId]);
@@ -260,6 +296,7 @@ async function handleApi(req, res, pathname) {
     }
     const courseMatch = pathname.match(/^\/api\/courses\/([^/]+)$/);
     if (courseMatch) {
+        if (token.type !== 'admin') { json(res, { error: 'Forbidden' }, 403); return; }
         const id = courseMatch[1];
         if (method === 'PUT') { let classId = null; if (b.className) { const { rows: cl } = await pool.query('SELECT id FROM classes WHERE name = $1', [b.className]); classId = cl[0]?.id || null; } const { rows } = await pool.query('UPDATE courses SET subject=$1,class_id=$2 WHERE id=$3 RETURNING *', [b.subject, classId, id]); json(res, { ...rows[0], class: b.className }); return; }
         if (method === 'DELETE') { await pool.query('DELETE FROM courses WHERE id = $1', [id]); json(res, { success: true }); return; }
@@ -272,11 +309,13 @@ async function handleApi(req, res, pathname) {
             const { rows: ec } = await pool.query('SELECT ec.exam_id, c.name FROM exam_classes ec JOIN classes c ON ec.class_id = c.id');
             const classMap = {}; ec.forEach(r => { if (!classMap[r.exam_id]) classMap[r.exam_id] = []; classMap[r.exam_id].push(r.name); });
             if (q.minimal === 'true') { json(res, exams.map(e => ({ id: e.id, title: e.title, type: e.type, subject: e.subject, classes: classMap[e.id] || [], startTime: e.start_time, duration: e.duration, isActivated: e.is_activated, isManuallyActive: e.is_manually_active }))); return; }
+            if (token.type === 'student' && q.minimal !== 'true') { json(res, { error: 'Full examination questions are restricted' }, 403); return; }
             const { rows: qs } = await pool.query('SELECT * FROM exam_questions ORDER BY question_order');
             const qMap = {}; qs.forEach(q => { if (!qMap[q.exam_id]) qMap[q.exam_id] = []; qMap[q.exam_id].push({ id: q.id, type: q.question_type, question: q.question_text, options: q.options || [], correctAnswer: q.correct_answer, points: q.points, wordLimit: q.word_limit }); });
             json(res, exams.map(e => ({ id: e.id, title: e.title, type: e.type, subject: e.subject, classes: classMap[e.id] || [], startTime: e.start_time, duration: e.duration, isActivated: e.is_activated, isManuallyActive: e.is_manually_active, isWritten: e.is_written, isGeneral: e.is_general, createdBy: e.created_by, createdAt: e.created_at, questions: qMap[e.id] || [], randomizedQuestions: qMap[e.id] || [] }))); return;
         }
         if (method === 'POST') {
+            if (!['admin', 'lecturer'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; }
             const client = await pool.connect();
             try {
                 await client.query('BEGIN');
@@ -299,6 +338,7 @@ async function handleApi(req, res, pathname) {
     }
     const examMatch = pathname.match(/^\/api\/exams\/([^/]+)$/);
     if (examMatch) {
+        if (!['admin', 'lecturer'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; }
         const id = examMatch[1];
         if (method === 'PUT') { const map = { title: 'title', type: 'type', subject: 'subject', startTime: 'start_time', duration: 'duration', isActivated: 'is_activated', isManuallyActive: 'is_manually_active', isWritten: 'is_written', isGeneral: 'is_general' }; const fields = [], values = []; let i = 1; for (const [k, col] of Object.entries(map)) if (b[k] !== undefined) { fields.push(`${col} = $${i++}`); values.push(b[k]); } if (!fields.length) { json(res, { id }); return; } values.push(id); const { rows } = await pool.query(`UPDATE exams SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`, values); json(res, rows[0]); return; }
         if (method === 'DELETE') { await pool.query('DELETE FROM exams WHERE id = $1', [id]); json(res, { success: true }); return; }
@@ -306,9 +346,19 @@ async function handleApi(req, res, pathname) {
 
     // Results
     if (pathname === '/api/results') {
-        if (method === 'GET') { const { rows } = await pool.query('SELECT * FROM results ORDER BY submitted_at DESC'); json(res, rows.map(r => ({ id: r.id, examId: r.exam_id, examTitle: r.exam_title, studentId: r.student_id, studentName: r.student_name, subject: r.subject, type: r.type, score: parseFloat(r.score), correctAnswers: r.correct_answers, totalQuestions: r.total_questions, submittedAt: r.submitted_at, isWritten: r.is_written, isReleased: r.is_released, isComposite: r.is_composite, compositeBreakdown: r.composite_breakdown, securityReport: r.security_report, answers: r.answers || [], questionDetails: r.question_details || [] }))); return; }
+        if (method === 'GET') {
+            if (token.type === 'student') {
+                const { rows } = await pool.query('SELECT * FROM results WHERE student_id = $1 AND is_released = true ORDER BY submitted_at DESC', [token.id]);
+                json(res, rows.map(r => ({ id:r.id, examId:r.exam_id, examTitle:r.exam_title, studentId:r.student_id, studentName:r.student_name, subject:r.subject, type:r.type, score:parseFloat(r.score), submittedAt:r.submitted_at, isReleased:r.is_released, answers:r.answers||[], questionDetails:r.question_details||[] }))); return;
+            }
+            if (!['admin','lecturer'].includes(token.type)) { json(res, { error:'Forbidden' }, 403); return; }
+            const { rows } = await pool.query('SELECT * FROM results ORDER BY submitted_at DESC'); json(res, rows.map(r => ({ id:r.id, examId:r.exam_id, examTitle:r.exam_title, studentId:r.student_id, studentName:r.student_name, subject:r.subject, type:r.type, score:parseFloat(r.score), submittedAt:r.submitted_at, isReleased:r.is_released, answers:r.answers||[], questionDetails:r.question_details||[] }))); return;
+        }
         if (method === 'POST') {
+            if (!['student','admin','lecturer'].includes(token.type)) { json(res, { error:'Forbidden' }, 403); return; }
             const r = b;
+            if (!r.examId) { json(res, { error:'Exam required' }, 400); return; }
+            if (token.type === 'student') r.studentId = token.id;
             // Block duplicate submissions — same student, same exam
             if (r.examId && r.studentId && !r.isComposite) {
                 const { rows: existing } = await pool.query(
@@ -326,6 +376,7 @@ async function handleApi(req, res, pathname) {
     }
     const resultMatch = pathname.match(/^\/api\/results\/([^/]+)$/);
     if (resultMatch) {
+        if (!['admin','lecturer'].includes(token.type)) { json(res, { error:'Forbidden' }, 403); return; }
         const id = resultMatch[1];
         if (method === 'PUT') { const fields = [], values = []; let i = 1; if (b.isReleased !== undefined) { fields.push(`is_released = $${i++}`); values.push(b.isReleased); } if (b.score !== undefined) { fields.push(`score = $${i++}`); values.push(b.score); } if (b.isWritten !== undefined) { fields.push(`is_written = $${i++}`); values.push(b.isWritten); } if (!fields.length) { json(res, { id }); return; } values.push(id); const { rows } = await pool.query(`UPDATE results SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`, values); json(res, rows[0]); return; }
         if (method === 'DELETE') { await pool.query('DELETE FROM results WHERE id = $1', [id]); json(res, { success: true }); return; }
@@ -333,12 +384,14 @@ async function handleApi(req, res, pathname) {
 
     // Result releases
     if (pathname === '/api/result-releases') {
+        if (!['admin', 'lecturer'].includes(token.type) && method !== 'GET') { json(res, { error: 'Forbidden' }, 403); return; }
         if (method === 'GET') { const { rows } = await pool.query('SELECT * FROM result_releases'); const releases = {}; rows.forEach(r => { releases[r.exam_id] = r.is_released; }); json(res, releases); return; }
         if (method === 'POST') { const { rows } = await pool.query('INSERT INTO result_releases (exam_id,is_released,released_at) VALUES ($1,$2,$3) ON CONFLICT (exam_id) DO UPDATE SET is_released=EXCLUDED.is_released,released_at=EXCLUDED.released_at RETURNING *', [b.examId, b.isReleased, b.isReleased ? new Date().toISOString() : null]); json(res, rows[0]); return; }
     }
 
     // Materials
     if (pathname === '/api/materials') {
+        if (!['admin', 'lecturer'].includes(token.type) && method !== 'GET') { json(res, { error: 'Forbidden' }, 403); return; }
         if (method === 'GET') { const { rows } = await pool.query('SELECT m.*, c.name as class_name FROM materials m LEFT JOIN classes c ON m.class_id = c.id ORDER BY m.uploaded_at DESC'); json(res, rows.map(m => ({ id: m.id, title: m.title, description: m.description, content: m.content, fileUrl: m.file_url, fileName: m.file_name, uploadedFile: m.uploaded_file, subject: m.subject, class: m.class_name, lecturerId: m.uploaded_by, uploadedBy: m.uploaded_by, uploadedAt: m.uploaded_at }))); return; }
         if (method === 'POST') { let classId = null; if (b.className) { const { rows: cl } = await pool.query('SELECT id FROM classes WHERE name = $1', [b.className]); classId = cl[0]?.id || null; } let uid = b.uploadedBy; if (!uid || !/^[0-9a-f-]{36}$/.test(uid)) { const { rows: u } = await pool.query('SELECT id FROM users WHERE username = $1', [token.username]); uid = u[0]?.id || null; } const { rows } = await pool.query('INSERT INTO materials (title,description,content,file_url,file_name,uploaded_file,subject,class_id,uploaded_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *', [b.title, b.description, b.content, b.fileUrl, b.fileName, b.uploadedFile, b.subject, classId, uid]); json(res, { ...rows[0], class: b.className }, 201); return; }
     }
@@ -354,6 +407,7 @@ async function handleApi(req, res, pathname) {
 
     // Announcements
     if (pathname === '/api/announcements') {
+        if (!['admin', 'lecturer'].includes(token.type) && method !== 'GET') { json(res, { error: 'Forbidden' }, 403); return; }
         if (method === 'GET') { const { rows: ann } = await pool.query('SELECT a.*, u.full_name as author_name FROM announcements a LEFT JOIN users u ON a.created_by = u.id ORDER BY a.created_at DESC'); const { rows: ac } = await pool.query('SELECT ac.announcement_id, c.name FROM announcement_classes ac JOIN classes c ON ac.class_id = c.id'); const classMap = {}; ac.forEach(r => { if (!classMap[r.announcement_id]) classMap[r.announcement_id] = []; classMap[r.announcement_id].push(r.name); }); json(res, ann.map(a => ({ id: a.id, title: a.title, message: a.message, content: a.message, type: a.type || 'general', target: a.type || 'general', createdBy: a.created_by, authorName: a.author_name || 'Admin', createdAt: a.created_at, targetClasses: classMap[a.id] || [], classes: classMap[a.id] || [] }))); return; }
         if (method === 'POST') { const client = await pool.connect(); try { await client.query('BEGIN'); let cid = b.createdBy; if (!cid || !/^[0-9a-f-]{36}$/.test(cid)) { const { rows } = await client.query('SELECT id FROM users WHERE username = $1', [token.username]); cid = rows[0]?.id || null; } const { rows } = await client.query('INSERT INTO announcements (title,message,type,created_by) VALUES ($1,$2,$3,$4) RETURNING *', [b.title, b.message || b.content, b.type || 'general', cid]); if (b.targetClasses?.length) { for (const name of b.targetClasses) { const { rows: cl } = await client.query('SELECT id FROM classes WHERE name = $1', [name]); if (cl[0]) await client.query('INSERT INTO announcement_classes (announcement_id,class_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [rows[0].id, cl[0].id]); } } await client.query('COMMIT'); json(res, { ...rows[0], classes: b.targetClasses || [] }, 201); } catch (err) { await client.query('ROLLBACK'); json(res, { error: err.message }, 500); } finally { client.release(); } return; }
     }
@@ -370,18 +424,21 @@ async function handleApi(req, res, pathname) {
 
     // Settings
     if (pathname === '/api/settings') {
+        if (token.type !== 'admin') { json(res, { error: 'Forbidden' }, 403); return; }
         if (method === 'GET') { if (q.key) { const { rows } = await pool.query('SELECT value FROM settings WHERE key = $1', [q.key]); json(res, { value: rows[0]?.value || null }); return; } const { rows } = await pool.query('SELECT * FROM settings'); json(res, rows); return; }
         if (method === 'POST') { const { rows } = await pool.query('INSERT INTO settings (key,value,updated_at) VALUES ($1,$2,NOW()) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW() RETURNING *', [b.key, String(b.value)]); json(res, rows[0]); return; }
     }
 
     // Written marks
     if (pathname === '/api/written-marks') {
+        if (!['admin', 'lecturer'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; }
         if (method === 'GET') { const { rows } = await pool.query('SELECT * FROM written_marks'); const marks = {}; rows.forEach(m => { const key = m.subject ? `${m.subject}_${m.class_name}` : `general_${m.class_name}`; if (!marks[key]) marks[key] = {}; if (!marks[key][m.exam_type]) marks[key][m.exam_type] = {}; marks[key][m.exam_type][m.student_id] = parseFloat(m.mark); }); json(res, marks); return; }
         if (method === 'POST') { const { rows } = await pool.query('INSERT INTO written_marks (subject,class_name,exam_type,student_id,mark) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (subject,class_name,exam_type,student_id) DO UPDATE SET mark=EXCLUDED.mark RETURNING *', [b.subject, b.className, b.examType, b.studentId, b.mark]); json(res, rows[0]); return; }
     }
 
     // Registration keys
     if (pathname === '/api/registration-keys') {
+        if (token.type !== 'admin') { json(res, { error: 'Forbidden' }, 403); return; }
         if (method === 'GET') { const { rows } = await pool.query('SELECT * FROM registration_keys ORDER BY created_at DESC'); json(res, rows.map(k => ({ key: k.key, createdAt: k.created_at }))); return; }
         if (method === 'POST') { const { rows } = await pool.query('INSERT INTO registration_keys (key) VALUES ($1) ON CONFLICT DO NOTHING RETURNING *', [b.key]); json(res, rows[0], 201); return; }
         if (method === 'DELETE') { await pool.query('DELETE FROM registration_keys WHERE key = $1', [b.key]); json(res, { success: true }); return; }
@@ -389,14 +446,17 @@ async function handleApi(req, res, pathname) {
 
     // Audit logs
     if (pathname === '/api/audit-logs') {
+        if (token.type !== 'admin') { json(res, { error: 'Forbidden' }, 403); return; }
         if (method === 'GET') { const page = parseInt(q.page) || 1; const limit = parseInt(q.limit) || 50; const offset = (page - 1) * limit; const { rows } = await pool.query('SELECT al.*, u.full_name as performer_name FROM audit_logs al LEFT JOIN users u ON al.performed_by = u.id ORDER BY al.created_at DESC LIMIT $1 OFFSET $2', [limit, offset]); const { rows: cnt } = await pool.query('SELECT COUNT(*) FROM audit_logs'); json(res, { data: rows.map(l => ({ id: l.id, actionType: l.action_type, description: l.description, performedBy: l.performer_name || l.performed_by || 'System', metadata: l.metadata, createdAt: l.created_at })), count: parseInt(cnt[0].count) }); return; }
         if (method === 'POST') { let uid = b.performedBy; if (!uid || !/^[0-9a-f-]{36}$/.test(uid)) { const { rows } = await pool.query('SELECT id FROM users WHERE username = $1', [token.username]); uid = rows[0]?.id || null; } await pool.query('INSERT INTO audit_logs (action_type,description,performed_by,metadata) VALUES ($1,$2,$3,$4)', [b.actionType, b.description, uid, b.metadata ? JSON.stringify(b.metadata) : '{}']); json(res, { success: true }, 201); return; }
     }
 
     // Submissions
     if (pathname === '/api/submissions') {
+        if (method === 'POST' && token.type !== 'student') { json(res, { error: 'Forbidden' }, 403); return; }
+        if (method === 'PUT' && !['admin', 'lecturer'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; }
         if (method === 'GET') { const url = q.assignmentId ? 'SELECT * FROM submissions WHERE assignment_id = $1 ORDER BY submitted_at DESC' : 'SELECT * FROM submissions ORDER BY submitted_at DESC'; const { rows } = await pool.query(url, q.assignmentId ? [q.assignmentId] : []); json(res, rows); return; }
-        if (method === 'POST') { const { rows } = await pool.query('INSERT INTO submissions (assignment_id,student_id,content,file_url) VALUES ($1,$2,$3,$4) RETURNING *', [b.assignmentId, b.studentId, b.content, b.fileUrl]); json(res, rows[0], 201); return; }
+        if (method === 'POST') { if (!b.assignmentId) { json(res, { error: 'Assignment required' }, 400); return; } const { rows } = await pool.query('INSERT INTO submissions (assignment_id,student_id,content,file_url) VALUES ($1,$2,$3,$4) RETURNING *', [b.assignmentId, token.id, b.content, b.fileUrl]); json(res, rows[0], 201); return; }
         if (method === 'PUT') { const { rows } = await pool.query('UPDATE submissions SET grade=$1,feedback=$2 WHERE id=$3 RETURNING *', [b.grade, b.feedback, b.id]); json(res, rows[0]); return; }
     }
 
@@ -442,5 +502,5 @@ server.listen(PORT, () => {
     console.log('   Student:  http://localhost:' + PORT + '/student/login.html');
     console.log('   Lecturer: http://localhost:' + PORT + '/lecturer/login.html');
     console.log('   Admin:    http://localhost:' + PORT + '/admin/login.html');
-    console.log('\n   Admin login: admin / admin123\n');
+    console.log('\n   Configure administrator credentials through the database.\n');
 });

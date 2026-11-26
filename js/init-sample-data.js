@@ -253,14 +253,11 @@ window.initializeSampleData = function initializeSampleData() {
     // No need to save again unless it's empty (which shouldn't happen)
     saveData('lms_courses', finalCourses);
     
-    // Set lecturer secret key
-    localStorage.setItem('lecturer_secret_key', 'SIGNALS2024');
     
     console.log('Signals Training School data initialized successfully!');
     console.log('Classes: SIGNALS BASIC, SIGNALS B III – B II, SIGNALS B II – B I, SUPERINTENDENT, PRE-QUALIFYING, REGIMENTAL BASIC, REGIMENTAL B III – B II, REGIMENTAL B II – B I, RSO / RSI, ELECTRONIC WARFARE COURSE, TACTICAL DRONE COURSE');
     console.log('Total Courses: ' + finalCourses.length);
-    console.log('Lecturer Secret Key: SIGNALS2024');
-    console.log('Admin Login: admin / admin123');
+    console.log('Configure administrator credentials and lecturer registration keys through the backend.');
     
     localStorage.setItem('sample_data_initialized', 'true');
 }

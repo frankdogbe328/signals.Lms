@@ -47,14 +47,14 @@ async function migrateToSupabase() {
         if (users) {
             const allUsers = [
                 ...(users.students || []).map(u => ({ 
-                    ...u, 
+                    ...u,
                     type: 'student',
-                    password_hash: u.password // TODO: Hash properly!
+                    password_hash: u.password_hash
                 })),
                 ...(users.lecturers || []).map(u => ({ 
-                    ...u, 
+                    ...u,
                     type: 'lecturer',
-                    password_hash: u.password // TODO: Hash properly!
+                    password_hash: u.password_hash
                 }))
             ];
             
@@ -66,9 +66,11 @@ async function migrateToSupabase() {
                 const classMap = {};
                 classes.forEach(c => { classMap[c.name] = c.id; });
                 
-                const userData = allUsers.map(u => ({
+                const userData = allUsers
+                    .filter(u => /^\$2[aby]\$/.test(u.password_hash || ''))
+                    .map(u => ({
                     username: u.username,
-                    password_hash: u.password_hash || u.password,
+                    password_hash: u.password_hash,
                     full_name: u.fullName,
                     email: u.email,
                     telephone: u.telephone,

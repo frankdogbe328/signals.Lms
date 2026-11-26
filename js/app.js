@@ -4,7 +4,7 @@ function initializeStorage() {
         localStorage.setItem('lms_users', JSON.stringify({
             students: [],
             lecturers: [],
-            admin: { username: 'admin', password: 'admin123', name: 'System Administrator' }
+            admin: null
         }));
     }
     

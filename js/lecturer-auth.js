@@ -724,11 +724,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     await updateUser(lecturer.id, 'lecturer', { password: newPassword });
                 } catch (error) {
                     console.warn('Supabase updateUser failed, using localStorage:', error);
-                    lecturer.password = newPassword;
                     saveData('lms_users', users);
                 }
             } else {
-                lecturer.password = newPassword;
                 saveData('lms_users', users);
             }
             

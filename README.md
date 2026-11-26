@@ -40,8 +40,8 @@ A comprehensive Learning Management System built with pure HTML, CSS, and JavaSc
 
 2. **Admin Login**
    - Username: `admin`
-   - Password: `admin123`
-   - Default lecturer secret key: `SIGNALS2024`
+   - Password: configured securely in PostgreSQL by the deployment administrator
+   - Lecturer registration key: configured in the database through an authorized administrator workflow
 
 3. **Setup Classes and Courses**
    - Login as admin
@@ -53,7 +53,7 @@ A comprehensive Learning Management System built with pure HTML, CSS, and JavaSc
 1. **Registration**
    - Click on "Lecturer Portal" from the main page
    - Click "Register here"
-   - Enter the secret key (default: `SIGNALS2024`)
+   - Enter a valid registration key provisioned by an administrator
    - Fill in your details
    - Select subjects and classes you'll be teaching
 
@@ -105,10 +105,10 @@ A comprehensive Learning Management System built with pure HTML, CSS, and JavaSc
 
 ## Technical Details
 
-### Data Storage
-- All data is stored in browser localStorage
-- Data persists between sessions
-- To reset: Clear browser localStorage
+### Data Storage and Backend
+- Production and local development use a PostgreSQL-backed API.
+- Vercel uses `api/[...path].js`; local development uses `dev-server.js`.
+- Browser localStorage is used for non-authoritative UI state and cache fallback only.
 
 ### Exam Auto-Start
 - Exams automatically become active at scheduled start time
@@ -152,8 +152,8 @@ A comprehensive Learning Management System built with pure HTML, CSS, and JavaSc
 
 ## Notes
 
-- This is a client-side only application (no backend server required)
-- All data is stored locally in the browser
-- For production use, consider implementing a backend server
-- Default admin credentials should be changed for security
-- Lecturer secret key should be kept confidential
+- The application requires PostgreSQL and the API server in production.
+- Set `DATABASE_URL` and `JWT_SECRET` before startup.
+- Use `PGSSLMODE=disable` only for an explicitly documented local-development exception.
+- Set `PGSSL_REJECT_UNAUTHORIZED=false` only when a provider-specific certificate chain requires it; certificate verification is enabled by default.
+- Administrator accounts and lecturer registration keys must be provisioned securely through the backend; no known default credentials are included.
