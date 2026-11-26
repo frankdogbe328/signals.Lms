@@ -16,6 +16,90 @@ export function getRegistrationAssignments(type, isAdminCaller, registrationScop
     };
 }
 
+export function toStudentSubmissionResponse(result) {
+    return {
+        id: result.id,
+        examId: result.exam_id,
+        examTitle: result.exam_title,
+        submittedAt: result.submitted_at,
+        isReleased: false
+    };
+}
+
+export async function canAssignWrittenMark(db, token, className, subject, studentId) {
+    const { rows } = await db.query(`
+        SELECT
+            EXISTS (
+                SELECT 1 FROM users student
+                JOIN classes c ON c.id = student.class_id
+                WHERE student.id = $4 AND student.type = 'student' AND c.name = $2
+            ) AS student_in_class,
+            ($5::boolean OR EXISTS (
+                SELECT 1 FROM users lecturer
+                WHERE lecturer.id = $1 AND lecturer.type = 'lecturer'
+                  AND $2 = ANY(lecturer.classes) AND $3 = ANY(lecturer.subjects)
+            )) AS lecturer_in_scope
+    `, [token.id, className, subject, studentId, token.type === 'admin']);
+    return rows[0]?.student_in_class === true && rows[0]?.lecturer_in_scope === true;
+}
+
+export async function canTargetAnnouncementClasses(db, token, targetClasses) {
+    if (!Array.isArray(targetClasses) || targetClasses.some(name => typeof name !== 'string' || !name.trim())) return false;
+    if (token.type === 'lecturer' && targetClasses.length === 0) return false;
+
+    const names = [...new Set(targetClasses.map(name => name.trim()))];
+    const { rows: classes } = await db.query(
+        'SELECT name FROM classes WHERE name = ANY($1::text[])',
+        [names]
+    );
+    if (classes.length !== names.length) return false;
+    if (token.type === 'admin') return true;
+    if (token.type !== 'lecturer') return false;
+
+    const { rows: lecturer } = await db.query('SELECT classes FROM users WHERE id = $1 AND type = $2', [token.id, 'lecturer']);
+    const assigned = new Set(lecturer[0]?.classes || []);
+    return names.every(name => assigned.has(name));
+}
+
+export async function gradeSubmission(db, token, id, grade, feedback) {
+    if (token.type === 'admin') {
+        return db.query(
+            'UPDATE submissions SET grade = $1, feedback = $2 WHERE id = $3 RETURNING *',
+            [grade, feedback, id]
+        );
+    }
+    if (token.type !== 'lecturer') return { rows: [] };
+    return db.query(`
+        UPDATE submissions SET grade = $1, feedback = $2 WHERE id = $3 AND EXISTS (
+            SELECT 1 FROM users student
+            JOIN classes c ON c.id = student.class_id
+            WHERE student.id = submissions.student_id AND student.type = 'student'
+              AND c.name = ANY((SELECT classes FROM users WHERE id = $4 AND type = 'lecturer'))
+        ) RETURNING *
+    `, [grade, feedback, id, token.id]);
+}
+
+export async function registerWithKey(client, key, createAccount) {
+    await client.query('BEGIN');
+    try {
+        const { rows } = await client.query(`
+            UPDATE registration_keys SET used_at = NOW()
+            WHERE key = $1 AND used_at IS NULL AND expires_at > NOW()
+            RETURNING classes, subjects
+        `, [key]);
+        if (!rows.length) {
+            await client.query('ROLLBACK');
+            return null;
+        }
+        const account = await createAccount(rows[0]);
+        await client.query('COMMIT');
+        return account;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    }
+}
+
 export async function canManageExam(db, token, examId) {
     if (isAdmin(token)) return true;
     if (token?.type !== 'lecturer' || !token.id) return false;
