@@ -157,3 +157,26 @@ A comprehensive Learning Management System built with pure HTML, CSS, and JavaSc
 - Use `PGSSLMODE=disable` only for an explicitly documented local-development exception.
 - Set `PGSSL_REJECT_UNAUTHORIZED=false` only when a provider-specific certificate chain requires it; certificate verification is enabled by default.
 - Administrator accounts and lecturer registration keys must be provisioned securely through the backend; no known default credentials are included.
+
+### Initial administrator provisioning
+
+Run the schema in `schema.sql` first. The schema does not create a default administrator and does not delete existing accounts. To create the first administrator, set `DATABASE_URL`, `INITIAL_ADMIN_USERNAME`, and `INITIAL_ADMIN_PASSWORD` in the current shell, then run `npm run provision-admin`. The password must be at least 12 characters; the script hashes it with bcrypt and inserts only if the username is unused. It never resets or replaces an existing account.
+
+PowerShell example (enter the secret interactively; do not put it in a command or commit it):
+
+```powershell
+$env:DATABASE_URL = "postgresql://..."
+$env:INITIAL_ADMIN_USERNAME = "school-admin"
+$secure = Read-Host "Initial administrator password" -AsSecureString
+$env:INITIAL_ADMIN_PASSWORD = [System.Net.NetworkCredential]::new("", $secure).Password
+npm run provision-admin
+Remove-Item Env:INITIAL_ADMIN_PASSWORD
+```
+
+### API origin allowlist and registration keys
+
+Cross-origin API access is disabled unless an exact origin is listed in `CORS_ALLOWED_ORIGINS` as a comma-separated environment variable. Same-origin browser requests need no CORS allowlist entry. Lecturer registration keys are single-use, expire after seven days, and carry the classes and subjects selected by an administrator. Public lecturer registration cannot broaden those assignments by submitting different classes or subjects. Existing keys migrate with empty scopes and should be revoked and regenerated with explicit assignments. Apply the updated schema before running either API implementation; it adds expiry, use, class-scope, and subject-scope columns to existing registration-key tables without deleting existing administrator accounts.
+
+### Security-related checks
+
+Run `npm test` for deterministic security unit tests. API smoke/integration tests require a running test server and are run explicitly with `RUN_API_TESTS=1`, `BASE_URL`, and role-specific test tokens/credentials. Do not point mutation tests at production.

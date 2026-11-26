@@ -607,11 +607,11 @@ async function saveWrittenMark(subject, className, examType, studentId, mark) {
 }
 
 async function saveRegistrationKey(key) {
-    const keyStr = typeof key === 'string' ? key : (key && key.key ? key.key : String(key));
+    const keyData = typeof key === 'string' ? { key, classes: [], subjects: [] } : key;
     try {
         const result = await apiFetch('/api/registration-keys', {
             method: 'POST',
-            body: JSON.stringify({ key: keyStr })
+            body: JSON.stringify(keyData)
         });
         invalidateCache('registration_keys');
         return result;
