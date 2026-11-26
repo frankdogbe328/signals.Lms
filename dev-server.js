@@ -12,8 +12,9 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import {
     canAssignWrittenMark, canManageExam, canTargetAnnouncementClasses,
-    getEligibleExam, getRegistrationAssignments, gradeObjectiveQuestions, gradeSubmission,
-    isExamOpen, registerWithKey, toStudentSubmissionResponse
+    getEligibleExam, getRegistrationAssignments, getResultAccess, getVisibleAnnouncements,
+    getVisibleMaterials, gradeObjectiveQuestions, gradeSubmission, isExamOpen,
+    registerWithKey, toResultResponse, toStudentSubmissionResponse
 } from './api/_security.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -454,7 +455,7 @@ async function handleApi(req, res, pathname) {
         if (method === 'GET') {
             if (token.type === 'student') {
                 const { rows } = await pool.query('SELECT * FROM results WHERE student_id = $1 AND is_released = true ORDER BY submitted_at DESC', [token.id]);
-                json(res, rows.map(r => ({ id:r.id, examId:r.exam_id, examTitle:r.exam_title, studentId:r.student_id, studentName:r.student_name, subject:r.subject, type:r.type, score:parseFloat(r.score), submittedAt:r.submitted_at, isReleased:r.is_released, answers:r.answers||[], questionDetails:r.question_details||[] }))); return;
+                json(res, rows.map(toResultResponse)); return;
             }
             if (!['admin','lecturer'].includes(token.type)) { json(res, { error:'Forbidden' }, 403); return; }
             const { rows } = await pool.query(
@@ -463,7 +464,7 @@ async function handleApi(req, res, pathname) {
                     : 'SELECT r.* FROM results r JOIN exams e ON e.id = r.exam_id WHERE e.created_by = $1 ORDER BY r.submitted_at DESC',
                 token.type === 'admin' ? [] : [token.id]
             );
-            json(res, rows.map(r => ({ id:r.id, examId:r.exam_id, examTitle:r.exam_title, studentId:r.student_id, studentName:r.student_name, subject:r.subject, type:r.type, score:parseFloat(r.score), submittedAt:r.submitted_at, isReleased:r.is_released, answers:r.answers||[], questionDetails:r.question_details||[] }))); return;
+            json(res, rows.map(toResultResponse)); return;
         }
         if (method === 'POST') {
             if (token.type !== 'student') { json(res, { error:'Only students may submit exam results' }, 403); return; }
@@ -505,10 +506,11 @@ async function handleApi(req, res, pathname) {
     if (resultMatch) {
         if (!['admin','lecturer'].includes(token.type)) { json(res, { error:'Forbidden' }, 403); return; }
         const id = resultMatch[1];
-        const { rows: resultOwner } = await pool.query('SELECT exam_id FROM results WHERE id = $1', [id]);
-        if (!resultOwner[0]) { json(res, { error: 'Result not found' }, 404); return; }
-        if (!await canManageExam(pool, token, resultOwner[0].exam_id)) { json(res, { error: 'Forbidden' }, 403); return; }
-        if (method === 'PUT') { const fields = [], values = []; let i = 1; if (b.isReleased !== undefined) { fields.push(`is_released = $${i++}`); values.push(b.isReleased); } if (b.score !== undefined) { fields.push(`score = $${i++}`); values.push(b.score); } if (b.isWritten !== undefined) { fields.push(`is_written = $${i++}`); values.push(b.isWritten); } if (!fields.length) { json(res, { id }); return; } values.push(id); const { rows } = await pool.query(`UPDATE results SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`, values); json(res, rows[0]); return; }
+        const { result, authorized } = await getResultAccess(pool, token, id);
+        if (!result) { json(res, { error: 'Result not found' }, 404); return; }
+        if (!authorized) { json(res, { error: 'Forbidden' }, 403); return; }
+        if (method === 'GET') { json(res, toResultResponse(result)); return; }
+        if (method === 'PUT') { const fields = [], values = []; let i = 1; if (b.isReleased !== undefined) { fields.push(`is_released = $${i++}`); values.push(b.isReleased); } if (b.score !== undefined) { fields.push(`score = $${i++}`); values.push(b.score); } if (b.isWritten !== undefined) { fields.push(`is_written = $${i++}`); values.push(b.isWritten); } if (!fields.length) { json(res, { id }); return; } values.push(id); const { rows } = await pool.query(`UPDATE results SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`, values); json(res, toResultResponse(rows[0])); return; }
         if (method === 'DELETE') { await pool.query('DELETE FROM results WHERE id = $1', [id]); json(res, { success: true }); return; }
     }
 
@@ -534,7 +536,12 @@ async function handleApi(req, res, pathname) {
     // Materials
     if (pathname === '/api/materials') {
         if (!['admin', 'lecturer'].includes(token.type) && method !== 'GET') { json(res, { error: 'Forbidden' }, 403); return; }
-        if (method === 'GET') { const { rows } = await pool.query('SELECT m.*, c.name as class_name FROM materials m LEFT JOIN classes c ON m.class_id = c.id ORDER BY m.uploaded_at DESC'); json(res, rows.map(m => ({ id: m.id, title: m.title, description: m.description, content: m.content, fileUrl: m.file_url, fileName: m.file_name, uploadedFile: m.uploaded_file, subject: m.subject, class: m.class_name, lecturerId: m.uploaded_by, uploadedBy: m.uploaded_by, uploadedAt: m.uploaded_at }))); return; }
+        if (method === 'GET') {
+            if (!['admin', 'lecturer', 'student'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; }
+            const rows = await getVisibleMaterials(pool, token);
+            json(res, rows.map(m => ({ id: m.id, title: m.title, description: m.description, content: m.content, fileUrl: m.file_url, fileName: m.file_name, uploadedFile: m.uploaded_file, subject: m.subject, class: m.class_name, lecturerId: m.uploaded_by, uploadedBy: m.uploaded_by, uploadedAt: m.uploaded_at })));
+            return;
+        }
         if (method === 'POST') { let classId = null; if (b.className) { const { rows: cl } = await pool.query('SELECT id FROM classes WHERE name = $1', [b.className]); classId = cl[0]?.id || null; } const { rows } = await pool.query('INSERT INTO materials (title,description,content,file_url,file_name,uploaded_file,subject,class_id,uploaded_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *', [b.title, b.description, b.content, b.fileUrl, b.fileName, b.uploadedFile, b.subject, classId, token.id]); json(res, { ...rows[0], class: b.className }, 201); return; }
     }
     if (pathname === '/api/materials/upload-signature') {
@@ -562,7 +569,7 @@ async function handleApi(req, res, pathname) {
     // Announcements
     if (pathname === '/api/announcements') {
         if (!['admin', 'lecturer'].includes(token.type) && method !== 'GET') { json(res, { error: 'Forbidden' }, 403); return; }
-        if (method === 'GET') { const { rows: ann } = await pool.query('SELECT a.*, u.full_name as author_name FROM announcements a LEFT JOIN users u ON a.created_by = u.id ORDER BY a.created_at DESC'); const { rows: ac } = await pool.query('SELECT ac.announcement_id, c.name FROM announcement_classes ac JOIN classes c ON ac.class_id = c.id'); const classMap = {}; ac.forEach(r => { if (!classMap[r.announcement_id]) classMap[r.announcement_id] = []; classMap[r.announcement_id].push(r.name); }); json(res, ann.map(a => ({ id: a.id, title: a.title, message: a.message, content: a.message, type: a.type || 'general', target: a.type || 'general', createdBy: a.created_by, authorName: a.author_name || 'Admin', createdAt: a.created_at, targetClasses: classMap[a.id] || [], classes: classMap[a.id] || [] }))); return; }
+        if (method === 'GET') { const ann = await getVisibleAnnouncements(pool, token); const { rows: ac } = await pool.query('SELECT ac.announcement_id, c.name FROM announcement_classes ac JOIN classes c ON c.id = ac.class_id'); const classMap = {}; ac.forEach(r => { if (!classMap[r.announcement_id]) classMap[r.announcement_id] = []; classMap[r.announcement_id].push(r.name); }); json(res, ann.map(a => ({ id: a.id, title: a.title, message: a.message, content: a.message, type: a.type || 'general', target: a.type || 'general', createdBy: a.created_by, authorName: a.author_name || 'Admin', createdAt: a.created_at, targetClasses: classMap[a.id] || [], classes: classMap[a.id] || [] }))); return; }
         if (method === 'POST') {
             if (!['admin', 'lecturer'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; }
             const requestedClasses = b.targetClasses ?? [];

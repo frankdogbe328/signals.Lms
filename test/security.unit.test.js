@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
     canAssignWrittenMark, canManageExam, canTargetAnnouncementClasses,
-    getEligibleExam, getRegistrationAssignments, gradeObjectiveQuestions,
+    getEligibleExam, getRegistrationAssignments, getResultAccess,
+    getVisibleAnnouncements, getVisibleMaterials, gradeObjectiveQuestions,
     gradeSubmission, isExamOpen, registerWithKey, toStudentSubmissionResponse
 } from '../api/_security.js';
 import { cors } from '../api/_cors.js';
@@ -42,6 +43,33 @@ test('only administrator or owning lecturer can manage an exam', async () => {
     assert.equal(await canManageExam(db, { type: 'lecturer', id: 'owner-id' }, 'exam-id'), true);
     assert.equal(await canManageExam(db, { type: 'lecturer', id: 'other-id' }, 'exam-id'), false);
     assert.equal(await canManageExam(db, { type: 'student', id: 'student-id' }, 'exam-id'), false);
+});
+
+test('individual result access resolves its exam and enforces lecturer ownership', async () => {
+    const calls = [];
+    const result = { id: 'result-a', exam_id: 'exam-a', score: '95' };
+    const db = {
+        query: async (sql, params) => {
+            calls.push({ sql, params });
+            if (sql.includes('FROM results')) return { rows: [result] };
+            return { rows: params[1] === 'lecturer-owner' ? [{}] : [] };
+        }
+    };
+    assert.deepEqual(await getResultAccess(db, { id: 'lecturer-owner', type: 'lecturer' }, 'result-a'), {
+        result,
+        authorized: true
+    });
+    assert.deepEqual(calls.map(call => call.params), [['result-a'], ['exam-a', 'lecturer-owner']]);
+    assert.deepEqual(await getResultAccess(db, { id: 'lecturer-other', type: 'lecturer' }, 'result-a'), {
+        result,
+        authorized: false
+    });
+
+    db.query = async () => ({ rows: [] });
+    assert.deepEqual(await getResultAccess(db, { id: 'lecturer-owner', type: 'lecturer' }, 'missing-result'), {
+        result: null,
+        authorized: false
+    });
 });
 
 test('public lecturer registration uses key scopes instead of requested assignments', () => {
@@ -111,6 +139,43 @@ test('lecturer announcement targets are limited to assigned existing classes', a
     assert.equal(await canTargetAnnouncementClasses(db, lecturer, []), false);
     assert.equal(await canTargetAnnouncementClasses(db, lecturer, ['Unknown']), false);
     assert.equal(await canTargetAnnouncementClasses(db, { id: 'admin-a', type: 'admin' }, []), true);
+});
+
+test('students see only global or matching-class announcements', async () => {
+    const calls = [];
+    const db = {
+        query: async (sql, params) => {
+            calls.push({ sql, params });
+            return { rows: [{ id: 'global' }, { id: 'class-match' }] };
+        }
+    };
+    const rows = await getVisibleAnnouncements(db, { id: 'student-a', type: 'student' });
+    assert.deepEqual(rows.map(row => row.id), ['global', 'class-match']);
+    assert.deepEqual(calls[0].params, ['student-a']);
+    assert.match(calls[0].sql, /NOT EXISTS\s*\(\s*SELECT 1 FROM announcement_classes target/);
+    assert.match(calls[0].sql, /target\.class_id = student\.class_id/);
+});
+
+test('students and lecturers only receive materials within their visibility scope', async () => {
+    const calls = [];
+    const db = {
+        query: async (sql, params) => {
+            calls.push({ sql, params });
+            return { rows: [] };
+        }
+    };
+    await getVisibleMaterials(db, { id: 'student-a', type: 'student' });
+    assert.deepEqual(calls[0].params, ['student-a']);
+    assert.match(calls[0].sql, /m\.class_id IS NULL OR m\.class_id = \(/);
+    assert.match(calls[0].sql, /WHERE id = \$1 AND type = 'student'/);
+
+    await getVisibleMaterials(db, { id: 'lecturer-a', type: 'lecturer' });
+    assert.deepEqual(calls[1].params, ['lecturer-a']);
+    assert.match(calls[1].sql, /WHERE m\.uploaded_by = \$1/);
+
+    await getVisibleMaterials(db, { id: 'admin-a', type: 'admin' });
+    assert.deepEqual(calls[2].params, []);
+    assert.doesNotMatch(calls[2].sql, /WHERE/);
 });
 
 test('submission grading keeps lecturer updates within assigned student classes', async () => {

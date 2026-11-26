@@ -3,8 +3,9 @@ import { verifyToken, createToken } from './_auth.js';
 import { cors } from './_cors.js';
 import {
     canAssignWrittenMark, canManageExam, canTargetAnnouncementClasses,
-    getEligibleExam, getRegistrationAssignments, gradeObjectiveQuestions, gradeSubmission,
-    isExamOpen, registerWithKey, toStudentSubmissionResponse
+    getEligibleExam, getRegistrationAssignments, getResultAccess, getVisibleAnnouncements,
+    getVisibleMaterials, gradeObjectiveQuestions, gradeSubmission, isExamOpen,
+    registerWithKey, toResultResponse, toStudentSubmissionResponse
 } from './_security.js';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
@@ -676,29 +677,18 @@ export default async function handler(req, res) {
         if (seg0 === 'results') {
             const token = verifyToken(req);
             if (!token) return res.status(401).json({ error: 'Unauthorized' });
-            const txR = r => ({
-                id: r.id, examId: r.exam_id, examTitle: r.exam_title,
-                studentId: r.student_id, studentName: r.student_name,
-                subject: r.subject, type: r.type, score: parseFloat(r.score),
-                correctAnswers: r.correct_answers, totalQuestions: r.total_questions,
-                submittedAt: r.submitted_at, isWritten: r.is_written,
-                isReleased: r.is_released, isComposite: r.is_composite,
-                compositeBreakdown: r.composite_breakdown, securityReport: r.security_report,
-                answers: r.answers || [], questionDetails: r.question_details || []
-            });
-
             if (!seg1) {
                 if (req.method === 'GET') {
                     if (token.type === 'student') {
                         const { rows } = await db.query('SELECT * FROM results WHERE student_id = $1 AND is_released = true ORDER BY submitted_at DESC', [token.id]);
-                        return res.json(rows.map(txR));
+                        return res.json(rows.map(toResultResponse));
                     }
                     if (!['admin', 'lecturer'].includes(token.type)) return res.status(403).json({ error: 'Forbidden' });
                     const { rows } = await db.query(token.type === 'admin'
                         ? 'SELECT * FROM results ORDER BY submitted_at DESC'
                         : 'SELECT r.* FROM results r JOIN exams e ON e.id = r.exam_id WHERE e.created_by = $1 ORDER BY r.submitted_at DESC',
                     token.type === 'admin' ? [] : [token.id]);
-                    return res.json(rows.map(txR));
+                    return res.json(rows.map(toResultResponse));
                 }
                 if (req.method === 'POST') {
                     if (token.type !== 'student') return res.status(403).json({ error: 'Only students may submit exam results' });
@@ -750,9 +740,10 @@ export default async function handler(req, res) {
 
             const id = seg1;
             if (!['admin', 'lecturer'].includes(token.type)) return res.status(403).json({ error: 'Forbidden' });
-            const { rows: existingResults } = await db.query('SELECT exam_id FROM results WHERE id = $1', [id]);
-            if (!existingResults[0]) return res.status(404).json({ error: 'Result not found' });
-            if (!await canManageExam(db, token, existingResults[0].exam_id)) return res.status(403).json({ error: 'Forbidden' });
+            const { result, authorized } = await getResultAccess(db, token, id);
+            if (!result) return res.status(404).json({ error: 'Result not found' });
+            if (!authorized) return res.status(403).json({ error: 'Forbidden' });
+            if (req.method === 'GET') return res.json(toResultResponse(result));
             if (req.method === 'PUT') {
                 const { isReleased, score, isWritten } = req.body;
                 const fields = [], values = [];
@@ -763,7 +754,7 @@ export default async function handler(req, res) {
                 if (!fields.length) return res.json({ id });
                 values.push(id);
                 const { rows } = await db.query(`UPDATE results SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`, values);
-                return res.json(rows[0]);
+                return res.json(toResultResponse(rows[0]));
             }
             if (req.method === 'DELETE') {
                 await db.query('DELETE FROM results WHERE id = $1', [id]);
@@ -837,10 +828,8 @@ export default async function handler(req, res) {
 
             if (!seg1) {
                 if (req.method === 'GET') {
-                    const { rows } = await db.query(`
-                        SELECT m.*, c.name as class_name FROM materials m
-                        LEFT JOIN classes c ON m.class_id = c.id ORDER BY m.uploaded_at DESC
-                    `);
+                    if (!['admin', 'lecturer', 'student'].includes(token.type)) return res.status(403).json({ error: 'Forbidden' });
+                    const rows = await getVisibleMaterials(db, token);
                     return res.json(rows.map(txM));
                 }
                 if (req.method === 'POST') {
@@ -885,10 +874,7 @@ export default async function handler(req, res) {
 
             if (!seg1) {
                 if (req.method === 'GET') {
-                    const { rows: anns } = await db.query(`
-                        SELECT a.*, u.full_name as author_name FROM announcements a
-                        LEFT JOIN users u ON a.created_by = u.id ORDER BY a.created_at DESC
-                    `);
+                    const anns = await getVisibleAnnouncements(db, token);
                     const { rows: ac } = await db.query(`
                         SELECT ac.announcement_id, c.name FROM announcement_classes ac
                         JOIN classes c ON ac.class_id = c.id

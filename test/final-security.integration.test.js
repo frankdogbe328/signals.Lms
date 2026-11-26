@@ -10,6 +10,12 @@ const adminToken = process.env.TEST_ADMIN_TOKEN;
 const lecturerToken = process.env.TEST_LECTURER_TOKEN;
 const studentToken = process.env.TEST_STUDENT_TOKEN;
 const examId = process.env.TEST_OPEN_EXAM_ID;
+const otherLecturerResultId = process.env.TEST_OTHER_LECTURER_RESULT_ID;
+const materialInScopeId = process.env.TEST_MATERIAL_IN_SCOPE_ID;
+const materialOutOfScopeId = process.env.TEST_MATERIAL_OUT_OF_SCOPE_ID;
+const announcementInScopeId = process.env.TEST_ANNOUNCEMENT_IN_SCOPE_ID;
+const announcementOutOfScopeId = process.env.TEST_ANNOUNCEMENT_OUT_OF_SCOPE_ID;
+const globalAnnouncementId = process.env.TEST_GLOBAL_ANNOUNCEMENT_ID;
 const classInScope = process.env.TEST_CLASS_IN_SCOPE;
 const classOutOfScope = process.env.TEST_CLASS_OUT_OF_SCOPE;
 const subjectInScope = process.env.TEST_SUBJECT_IN_SCOPE;
@@ -30,9 +36,9 @@ if (enabled) {
     }
 }
 
-async function api(path, token, body) {
+async function api(path, token, body, method = body === undefined ? 'GET' : 'POST') {
     const response = await fetch(new URL(path, baseUrl), {
-        method: body === undefined ? 'GET' : 'POST',
+        method,
         headers: {
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
             'Content-Type': 'application/json'
@@ -60,6 +66,39 @@ describe('final security API regressions', { skip: !enabled }, () => {
         assert.equal(Object.hasOwn(response.body, 'answers'), false);
         assert.equal(Object.hasOwn(response.body, 'questionDetails'), false);
         assert.equal(Object.hasOwn(response.body, 'correctAnswer'), false);
+    });
+
+    test('lecturer cannot GET, update, or delete another lecturer examination result', async t => {
+        if (!otherLecturerResultId) return t.skip('TEST_OTHER_LECTURER_RESULT_ID fixture is required');
+        const [read, update, remove] = await Promise.all([
+            api(`/api/results/${otherLecturerResultId}`, lecturerToken),
+            api(`/api/results/${otherLecturerResultId}`, lecturerToken, { score: 100 }, 'PUT'),
+            api(`/api/results/${otherLecturerResultId}`, lecturerToken, undefined, 'DELETE')
+        ]);
+        assert.deepEqual([read.status, update.status, remove.status], [403, 403, 403]);
+    });
+
+    test('student material visibility is limited to global or own-class materials', async t => {
+        if (!materialInScopeId || !materialOutOfScopeId) {
+            return t.skip('TEST_MATERIAL_IN_SCOPE_ID and TEST_MATERIAL_OUT_OF_SCOPE_ID fixtures are required');
+        }
+        const response = await api('/api/materials', studentToken);
+        assert.equal(response.status, 200);
+        const visibleIds = new Set(response.body.map(material => material.id));
+        assert.equal(visibleIds.has(materialInScopeId), true);
+        assert.equal(visibleIds.has(materialOutOfScopeId), false);
+    });
+
+    test('student announcement visibility is limited to global or own-class announcements', async t => {
+        if (!announcementInScopeId || !announcementOutOfScopeId || !globalAnnouncementId) {
+            return t.skip('TEST_ANNOUNCEMENT_IN_SCOPE_ID, TEST_ANNOUNCEMENT_OUT_OF_SCOPE_ID, and TEST_GLOBAL_ANNOUNCEMENT_ID fixtures are required');
+        }
+        const response = await api('/api/announcements', studentToken);
+        assert.equal(response.status, 200);
+        const visibleIds = new Set(response.body.map(announcement => announcement.id));
+        assert.equal(visibleIds.has(announcementInScopeId), true);
+        assert.equal(visibleIds.has(globalAnnouncementId), true);
+        assert.equal(visibleIds.has(announcementOutOfScopeId), false);
     });
 
     test('lecturer cannot write marks for students outside class or subject scope', async t => {

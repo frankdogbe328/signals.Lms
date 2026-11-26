@@ -26,6 +26,72 @@ export function toStudentSubmissionResponse(result) {
     };
 }
 
+export function toResultResponse(result) {
+    return {
+        id: result.id, examId: result.exam_id, examTitle: result.exam_title,
+        studentId: result.student_id, studentName: result.student_name,
+        subject: result.subject, type: result.type, score: parseFloat(result.score),
+        correctAnswers: result.correct_answers, totalQuestions: result.total_questions,
+        submittedAt: result.submitted_at, isWritten: result.is_written,
+        isReleased: result.is_released, isComposite: result.is_composite,
+        compositeBreakdown: result.composite_breakdown, securityReport: result.security_report,
+        answers: result.answers || [], questionDetails: result.question_details || []
+    };
+}
+
+export async function getResultAccess(db, token, id) {
+    const { rows } = await db.query('SELECT * FROM results WHERE id = $1', [id]);
+    if (!rows[0]) return { result: null, authorized: false };
+    return {
+        result: rows[0],
+        authorized: await canManageExam(db, token, rows[0].exam_id)
+    };
+}
+
+export async function getVisibleMaterials(db, token) {
+    let query = `
+        SELECT m.*, c.name AS class_name FROM materials m
+        LEFT JOIN classes c ON c.id = m.class_id
+    `;
+    let values = [];
+    if (token.type === 'student') {
+        query += ` WHERE m.class_id IS NULL OR m.class_id = (
+            SELECT class_id FROM users WHERE id = $1 AND type = 'student'
+        )`;
+        values = [token.id];
+    } else if (token.type === 'lecturer') {
+        query += ' WHERE m.uploaded_by = $1';
+        values = [token.id];
+    } else if (token.type !== 'admin') {
+        return [];
+    }
+    const { rows } = await db.query(`${query} ORDER BY m.uploaded_at DESC`, values);
+    return rows;
+}
+
+export async function getVisibleAnnouncements(db, token) {
+    let query = `
+        SELECT a.*, u.full_name AS author_name FROM announcements a
+        LEFT JOIN users u ON a.created_by = u.id
+    `;
+    let values = [];
+    if (token.type === 'student') {
+        query += ` WHERE NOT EXISTS (
+            SELECT 1 FROM announcement_classes target
+            WHERE target.announcement_id = a.id
+        ) OR EXISTS (
+            SELECT 1 FROM announcement_classes target
+            JOIN users student ON student.id = $1 AND student.type = 'student'
+            WHERE target.announcement_id = a.id AND target.class_id = student.class_id
+        )`;
+        values = [token.id];
+    } else if (!['admin', 'lecturer'].includes(token.type)) {
+        return [];
+    }
+    const { rows } = await db.query(`${query} ORDER BY a.created_at DESC`, values);
+    return rows;
+}
+
 export async function canAssignWrittenMark(db, token, className, subject, studentId) {
     const { rows } = await db.query(`
         SELECT

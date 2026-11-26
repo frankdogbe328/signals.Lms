@@ -23,12 +23,14 @@ This report covers the second remediation and final correction pass. Changes are
 | Announcement targeting | High | Both APIs validate target class names on the backend. Lecturers must specify one or more valid assigned classes and cannot create school-wide announcements. Administrators may still use an empty class target for school-wide announcements. |
 | Submission grading | High | Both APIs apply an atomic class-scope predicate to lecturer grade updates, and lecturer submission reads use the same assigned-class constraint. Students must be actual student accounts. The current schema cannot establish ownership of an assignment itself; see the migration proposal below. |
 | Registration-key consumption | High | Lecturer key claim and account creation now occur in one transaction in both implementations. The conditional `UPDATE ... WHERE used_at IS NULL AND expires_at > NOW()` serializes concurrent claims; account creation failure rolls the key update back. |
+| Individual result access | High | Local and Vercel APIs restrict individual result GET/PUT/DELETE to administrators and lecturers. They load the result's exam ID and call the shared `canManageExam()` check before returning or changing it; lecturers cannot access another lecturer's exam results. |
+| Class-scoped reads | High | Students receive only school-wide or their own-class announcements and materials. Class-specific material is hidden from other students. Lecturers see only materials they uploaded; administrators retain all-material access. |
 
 ## Files changed in this pass
 
-- `api/_security.js`: shared exam ownership, eligibility, and backend grading helpers.
-- `api/[...path].js`: result integrity and response shaping, exam ownership, written-mark and announcement target scope, submission grade scope, registration transaction, materials and notification authorization, privileged registration fields, and scoped one-time keys.
-- `dev-server.js`: matching result response, mark, announcement, submission, and registration controls plus local login throttling, multipart handling, local CORS, and earlier authorization protections.
+- `api/_security.js`: shared exam/result ownership, class-scoped visibility, eligibility, and backend grading helpers.
+- `api/[...path].js`: individual result access, class-scoped announcement/material reads, result integrity, exam ownership, written-mark and announcement target scope, submission grade scope, registration transaction, materials and notification authorization, privileged registration fields, and scoped one-time keys.
+- `dev-server.js`: matching result ownership and class-scoped read controls plus result response shaping, marks, announcements, submissions, registration, login throttling, multipart handling, local CORS, and earlier authorization protections.
 - `api/_cors.js`: exact configured CORS origin allowlist; no wildcard credentials.
 - `schema.sql`: removed default admin credentials, safely adds registration-key expiry/use/scope columns, and adds ownership indexes.
 - `js/admin-dashboard.js`, `js/api-service.js`: scoped, cryptographically random lecturer key generation and submission.
@@ -37,14 +39,14 @@ This report covers the second remediation and final correction pass. Changes are
 - `.gitignore`: allows npm package lockfile tracking.
 - `.env.example`: documents the optional exact-origin CORS allowlist.
 - `README.md`: secure admin setup, CORS allowlist, registration-key policy, and guarded test prerequisites.
-- `test/security.unit.test.js`: deterministic grading, ownership, exam eligibility, response redaction, mark/announcement/submission authorization, and transaction tests.
+- `test/security.unit.test.js`: deterministic grading, ownership, exam eligibility, registration scope, response redaction, written marks, announcement/material class visibility, submission authorization, and transaction tests.
 - `test/smoke.test.js`: optional live-server authorization tests for student/lecturer/admin role behavior.
 - `test/final-security.integration.test.js`: local-database-only regression checks for answer leakage, mark/announcement/submission authorization, transaction rollback, and concurrent key reuse.
 - `SECURITY_REMEDIATION.md`: updated status and remaining limitations.
 
 ## Verification
 
-Dependencies were installed with `npm ci` from the checked-in lockfile. JavaScript syntax checks, `npm test`, `npm run build`, and `git diff --check` passed. The security unit suite passed (12 tests). Vite emitted existing warnings that classic script tags cannot be bundled as module scripts; the build completed successfully. `npm ci` also reported 6 dependency advisories (1 moderate, 5 high); dependency upgrades were not part of this correction pass.
+For the final targeted patch, `npm test`, `npm run build`, JavaScript syntax checks, and `git diff --check` passed. The unit test run passed all 15 tests. Both gated live API suites were skipped because a disposable test database and dedicated accounts/fixtures are not configured. Vite emitted existing warnings that classic script tags cannot be bundled as module scripts; the build completed successfully. Earlier `npm ci` reported 6 dependency advisories (1 moderate, 5 high); dependency upgrades were not part of these correction passes.
 
 The final live API integration suite was not run: no test database URL, test-role tokens, or fixture configuration is present in the environment. The existing optional smoke suite was also skipped. The new mutation tests require a local API server and assert `DATABASE_URL` exactly matches `TEST_DATABASE_URL`; they refuse non-local API URLs. Test setup must use a disposable database, an open eligible exam with no prior attempt for the test student, assigned/unassigned class fixtures, a student outside the lecturer's assigned class, and an existing username for key-rollback testing. No production database was accessed.
 
