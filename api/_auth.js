@@ -1,6 +1,20 @@
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'lms_signals_secret_change_in_prod';
+function getJwtSecret() {
+    const secret = process.env.JWT_SECRET;
+    if (secret) {
+        if (secret.length < 32) throw new Error('JWT_SECRET must be at least 32 characters');
+        return secret;
+    }
+    if (process.env.NODE_ENV === 'production' || process.env.VERCEL) {
+        throw new Error('JWT_SECRET is required in production');
+    }
+    // Development only: use a process-ephemeral secret when one is not configured.
+    return crypto.randomBytes(48).toString('base64');
+}
+
+const JWT_SECRET = getJwtSecret();
 
 export function createToken(user) {
     return jwt.sign(
@@ -18,4 +32,8 @@ export function verifyToken(req) {
     } catch {
         return null;
     }
+}
+
+export function requireAdmin(caller) {
+    return caller?.type === 'admin';
 }

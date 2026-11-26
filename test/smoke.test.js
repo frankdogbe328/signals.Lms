@@ -2,7 +2,7 @@
 //
 // Requires:
 //   - A running server (local dev at http://localhost:3000, or set BASE_URL)
-//   - Admin credentials in env: ADMIN_USER (default 'admin'), ADMIN_PASS (default 'admin123')
+//   - Admin credentials in env: ADMIN_USER and ADMIN_PASS (no defaults)
 //
 // Run: node --test test/smoke.test.js
 //   or: npm test
@@ -16,8 +16,8 @@ import { test, describe, before } from 'node:test';
 import assert from 'node:assert';
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
-const ADMIN_USER = process.env.ADMIN_USER || 'admin';
-const ADMIN_PASS = process.env.ADMIN_PASS || 'admin123';
+const ADMIN_USER = process.env.ADMIN_USER;
+const ADMIN_PASS = process.env.ADMIN_PASS;
 
 let adminToken = null;
 
@@ -47,6 +47,19 @@ describe('/api smoke tests', () => {
             console.warn(`⚠️  Admin login failed (${res.status}). Auth-required tests will be skipped.`);
             console.warn(`   Set ADMIN_USER/ADMIN_PASS env vars for a valid admin account.`);
         }
+    });
+
+    test('Invalid bearer token is rejected', async () => {
+        const res = await api('/api/users', { headers: { 'Authorization': 'Bearer invalid.token.value' } });
+        assert.strictEqual(res.status, 401);
+    });
+
+    test('Public registration cannot create administrator accounts', async () => {
+        const res = await api('/api/auth/register', {
+            method: 'POST',
+            body: JSON.stringify({ username: 'forbidden-admin-smoke-test', password: 'TestPassword123!', type: 'admin' })
+        });
+        assert.ok([403, 401].includes(res.status));
     });
 
     test('GET /api/ping returns 200', async () => {
@@ -84,6 +97,8 @@ describe('/api smoke tests', () => {
         assert.strictEqual(res.status, 200);
         assert.ok(Array.isArray(res.body.students));
         assert.ok(Array.isArray(res.body.lecturers));
+        const allUsers = [...res.body.students, ...res.body.lecturers, ...(res.body.admin ? [res.body.admin] : [])];
+        assert.ok(allUsers.every(user => !Object.prototype.hasOwnProperty.call(user, 'password') && !Object.prototype.hasOwnProperty.call(user, 'password_hash')));
     });
 
     test('GET /api/classes is public and returns array', async () => {

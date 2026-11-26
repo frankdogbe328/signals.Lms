@@ -126,7 +126,7 @@ export default async function handler(req, res) {
                 }
             };
 
-            await dumpTable('users');
+            await dumpTable('users', 'SELECT id,username,full_name,email,telephone,type,rank,class_id,subjects,classes,can_print_results,created_at FROM users');
             await dumpTable('classes');
             await dumpTable('courses');
             await dumpTable('exams');
@@ -243,14 +243,17 @@ export default async function handler(req, res) {
                 const { rows } = await db.query(q, type ? [username, type] : [username]);
                 const user = rows[0];
                 if (!user) return res.status(401).json({ error: 'Invalid username or password' });
-                const match = user.password_hash.startsWith('$2')
-                    ? await bcrypt.compare(password, user.password_hash)
-                    : user.password_hash === password;
+                const isBcryptHash = /^\$2[aby]\$/.test(user.password_hash || '');
+                if (!isBcryptHash) {
+                    // Legacy plaintext credentials are not accepted. Preserve access only through the migration procedure.
+                    return res.status(401).json({ error: 'Invalid username or password' });
+                }
+                const match = await bcrypt.compare(password, user.password_hash);
                 if (!match) return res.status(401).json({ error: 'Invalid username or password' });
                 return res.json({
                     token: createToken(user),
                     user: {
-                        id: user.id, username: user.username, password: user.password_hash,
+                        id: user.id, username: user.username,
                         fullName: user.full_name, email: user.email, telephone: user.telephone,
                         type: user.type, rank: user.rank, class: user.class_name,
                         classId: user.class_id, subjects: user.subjects || [],
@@ -262,11 +265,16 @@ export default async function handler(req, res) {
             if (seg1 === 'register') {
                 const { username, password, fullName, email, telephone, type, rank, className, classes, subjects, registrationKey, canPrintResults } = req.body;
                 if (!username || !password || !type) return res.status(400).json({ error: 'Missing required fields' });
+                if (typeof username !== 'string' || username.trim().length < 3 || username.length > 100) return res.status(400).json({ error: 'Invalid username' });
+                if (typeof password !== 'string' || password.length < 8 || password.length > 128) return res.status(400).json({ error: 'Password must be 8-128 characters' });
+                const caller = verifyToken(req);
+                const isAdminCaller = caller?.type === 'admin';
+                if (!['student', 'lecturer', 'admin'].includes(type)) return res.status(400).json({ error: 'Invalid account type' });
+                if (type === 'admin' && !isAdminCaller) return res.status(403).json({ error: 'Administrator accounts require authorization' });
+                if (type !== 'admin' && type !== 'student' && type !== 'lecturer') return res.status(400).json({ error: 'Invalid account type' });
                 const { rows: ex } = await db.query('SELECT id FROM users WHERE username = $1', [username]);
                 if (ex.length) return res.status(409).json({ error: 'Username already exists' });
                 if (type === 'lecturer') {
-                    const caller = verifyToken(req);
-                    const isAdminCaller = caller && caller.type === 'admin';
                     if (!isAdminCaller) {
                         if (!registrationKey) return res.status(400).json({ error: 'Registration key required for lecturers' });
                         const { rows: keys } = await db.query('SELECT id FROM registration_keys WHERE key = $1', [registrationKey]);
@@ -302,8 +310,9 @@ export default async function handler(req, res) {
                     SELECT u.*, c.name as class_name FROM users u
                     LEFT JOIN classes c ON u.class_id = c.id ORDER BY u.created_at DESC
                 `);
+                if (token.type !== 'admin') return res.status(403).json({ error: 'Forbidden' });
                 const mapUser = u => ({
-                    id: u.id, username: u.username, password: u.password_hash,
+                    id: u.id, username: u.username,
                     fullName: u.full_name, email: u.email, telephone: u.telephone,
                     type: u.type, rank: u.rank, class: u.class_name, classId: u.class_id,
                     subjects: u.subjects || [], classes: u.classes || [],
@@ -317,8 +326,16 @@ export default async function handler(req, res) {
             }
 
             const id = seg1;
+            const { rows: targets } = await db.query('SELECT id,type FROM users WHERE id = $1', [id]);
+            const target = targets[0];
+            if (!target) return res.status(404).json({ error: 'User not found' });
+            if (token.type !== 'admin' && token.id !== id) return res.status(403).json({ error: 'Forbidden' });
             if (req.method === 'PUT') {
-                const { username, fullName, email, telephone, rank, subjects, classes, password, className, canPrintResults } = req.body;
+                const { username, fullName, email, telephone, rank, subjects, classes, password, className, canPrintResults, type, accountStatus } = req.body;
+                if (type !== undefined && token.type !== 'admin') return res.status(403).json({ error: 'Account type cannot be changed' });
+                if (type !== undefined && token.id === id) return res.status(403).json({ error: 'Cannot change your own account type' });
+                if (accountStatus !== undefined) return res.status(403).json({ error: 'Protected account fields cannot be changed' });
+                if (canPrintResults !== undefined && token.type !== 'admin') return res.status(403).json({ error: 'Protected account fields cannot be changed' });
                 let classId;
                 if (className !== undefined) {
                     classId = null;
@@ -331,6 +348,7 @@ export default async function handler(req, res) {
                 let i = 1;
                 const add = (col, val) => { updates.push(`${col} = $${i++}`); values.push(val); };
                 if (username !== undefined) add('username', username);
+                if (type !== undefined && ['student', 'lecturer', 'admin'].includes(type)) add('type', type);
                 if (fullName !== undefined) add('full_name', fullName);
                 if (email !== undefined) add('email', email);
                 if (telephone !== undefined) add('telephone', telephone);
@@ -339,13 +357,18 @@ export default async function handler(req, res) {
                 if (classes !== undefined) add('classes', classes);
                 if (canPrintResults !== undefined) add('can_print_results', canPrintResults);
                 if (classId !== undefined) add('class_id', classId);
-                if (password) add('password_hash', await bcrypt.hash(password, 10));
+                if (password !== undefined) {
+                    if (typeof password !== 'string' || password.length < 8 || password.length > 128) return res.status(400).json({ error: 'Password must be 8-128 characters' });
+                    add('password_hash', await bcrypt.hash(password, 10));
+                }
                 if (!updates.length) return res.json({ id });
                 values.push(id);
-                const { rows } = await db.query(`UPDATE users SET ${updates.join(', ')} WHERE id = $${i} RETURNING *`, values);
-                return res.json(rows[0]);
+                const { rows } = await db.query(`UPDATE users SET ${updates.join(', ')} WHERE id = $${i} RETURNING id,username,full_name,email,telephone,type,rank,class_id,subjects,classes,can_print_results,created_at`, values);
+                const u = rows[0];
+                return res.json(u ? { id:u.id, username:u.username, fullName:u.full_name, email:u.email, telephone:u.telephone, type:u.type, rank:u.rank, classId:u.class_id, subjects:u.subjects||[], classes:u.classes||[], canPrintResults:u.can_print_results, createdAt:u.created_at } : { id });
             }
             if (req.method === 'DELETE') {
+                if (token.type !== 'admin') return res.status(403).json({ error: 'Forbidden' });
                 await db.query('DELETE FROM users WHERE id = $1', [id]);
                 return res.json({ success: true });
             }
@@ -362,6 +385,7 @@ export default async function handler(req, res) {
                 const token = verifyToken(req);
                 if (!token) return res.status(401).json({ error: 'Unauthorized' });
                 if (req.method === 'POST') {
+                    if (token.type !== 'admin') return res.status(403).json({ error: 'Forbidden' });
                     const { name } = req.body;
                     if (!name) return res.status(400).json({ error: 'Name required' });
                     const { rows } = await db.query(
@@ -375,6 +399,7 @@ export default async function handler(req, res) {
             const token = verifyToken(req);
             if (!token) return res.status(401).json({ error: 'Unauthorized' });
             const id = seg1;
+            if (token.type !== 'admin') return res.status(403).json({ error: 'Forbidden' });
             if (req.method === 'PUT') {
                 const { name } = req.body;
                 const { rows } = await db.query('UPDATE classes SET name = $1 WHERE id = $2 RETURNING *', [name, id]);
@@ -401,6 +426,9 @@ export default async function handler(req, res) {
                     })));
                 }
                 if (req.method === 'POST') {
+                    const token = verifyToken(req);
+                    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+                    if (token.type !== 'admin') return res.status(403).json({ error: 'Forbidden' });
                     const { subject, className } = req.body;
                     if (!subject) return res.status(400).json({ error: 'Subject required' });
                     let classId = null;
@@ -418,6 +446,7 @@ export default async function handler(req, res) {
             }
             const token = verifyToken(req);
             if (!token) return res.status(401).json({ error: 'Unauthorized' });
+            if (token.type !== 'admin') return res.status(403).json({ error: 'Forbidden' });
             const id = seg1;
             if (req.method === 'PUT') {
                 const { subject, className } = req.body;
@@ -456,6 +485,7 @@ export default async function handler(req, res) {
             if (!seg1) {
                 if (req.method === 'GET') {
                     const minimal = req.query.minimal === 'true';
+                    if (token.type === 'student' && !minimal) return res.status(403).json({ error: 'Full examination questions are restricted' });
                     const { rows: exams } = await db.query('SELECT * FROM exams ORDER BY created_at DESC');
                     const { rows: ec } = await db.query(`
                         SELECT ec.exam_id, c.name FROM exam_classes ec JOIN classes c ON ec.class_id = c.id
@@ -481,6 +511,7 @@ export default async function handler(req, res) {
                 }
 
                 if (req.method === 'POST') {
+                    if (!['admin', 'lecturer'].includes(token.type)) return res.status(403).json({ error: 'Forbidden' });
                     const exam = req.body;
                     const client = await db.connect();
                     try {
@@ -544,6 +575,13 @@ export default async function handler(req, res) {
             }
 
             const id = seg1;
+            if (!['admin', 'lecturer'].includes(token.type)) return res.status(403).json({ error: 'Forbidden' });
+            const { rows: examOwner } = await db.query('SELECT created_by FROM exams WHERE id = $1', [id]);
+            if (!examOwner[0]) return res.status(404).json({ error: 'Exam not found' });
+            if (token.type === 'lecturer') {
+                const { rows: owner } = await db.query('SELECT id FROM users WHERE username = $1', [token.username]);
+                if (examOwner[0].created_by !== owner[0]?.id) return res.status(403).json({ error: 'Forbidden' });
+            }
             if (req.method === 'PUT') {
                 const updates = req.body;
                 const fields = [], values = [];
@@ -581,18 +619,27 @@ export default async function handler(req, res) {
 
             if (!seg1) {
                 if (req.method === 'GET') {
+                    if (token.type === 'student') {
+                        const { rows } = await db.query('SELECT * FROM results WHERE student_id = $1 AND is_released = true ORDER BY submitted_at DESC', [token.id]);
+                        return res.json(rows.map(txR));
+                    }
+                    if (!['admin', 'lecturer'].includes(token.type)) return res.status(403).json({ error: 'Forbidden' });
                     const { rows } = await db.query('SELECT * FROM results ORDER BY submitted_at DESC');
                     return res.json(rows.map(txR));
                 }
                 if (req.method === 'POST') {
+                    if (!['student', 'admin', 'lecturer'].includes(token.type)) return res.status(403).json({ error: 'Forbidden' });
                     const r = req.body;
+                    if (!r.examId) return res.status(400).json({ error: 'Exam required' });
+                    const studentId = token.type === 'student' ? token.id : r.studentId;
+                    if (!studentId) return res.status(400).json({ error: 'Student required' });
                     const { rows } = await db.query(
                         `INSERT INTO results (exam_id,exam_title,student_id,student_name,subject,type,score,
                          correct_answers,total_questions,submitted_at,is_written,is_released,is_composite,
                          composite_breakdown,security_report,answers,question_details)
                          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
                          ON CONFLICT DO NOTHING RETURNING *`,
-                        [r.examId, r.examTitle, r.studentId, r.studentName, r.subject, r.type,
+                        [r.examId, r.examTitle, studentId, r.studentName, r.subject, r.type,
                          r.score, r.correctAnswers, r.totalQuestions,
                          r.submittedAt || new Date().toISOString(),
                          r.isWritten || false, r.isReleased || false, r.isComposite || false,
@@ -606,6 +653,7 @@ export default async function handler(req, res) {
             }
 
             const id = seg1;
+            if (!['admin', 'lecturer'].includes(token.type)) return res.status(403).json({ error: 'Forbidden' });
             if (req.method === 'PUT') {
                 const { isReleased, score, isWritten } = req.body;
                 const fields = [], values = [];
@@ -629,6 +677,7 @@ export default async function handler(req, res) {
         if (seg0 === 'result-releases') {
             const token = verifyToken(req);
             if (!token) return res.status(401).json({ error: 'Unauthorized' });
+            if (!['admin', 'lecturer'].includes(token.type) && req.method !== 'GET') return res.status(403).json({ error: 'Forbidden' });
             if (req.method === 'GET') {
                 const { rows } = await db.query('SELECT * FROM result_releases');
                 const releases = {};
@@ -669,6 +718,10 @@ export default async function handler(req, res) {
             });
 
             if (seg1 === 'upload-signature') {
+                if (!['admin', 'lecturer'].includes(token.type)) return res.status(403).json({ error: 'Forbidden' });
+                if (!process.env.CLOUDINARY_API_SECRET || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_CLOUD_NAME) {
+                    return res.status(503).json({ error: 'Upload integration is not configured' });
+                }
                 const timestamp = Math.round(Date.now() / 1000);
                 const folder = 'signals-lms';
                 const sortedStr = `folder=${folder}&timestamp=${timestamp}`;
@@ -686,6 +739,7 @@ export default async function handler(req, res) {
                     return res.json(rows.map(txM));
                 }
                 if (req.method === 'POST') {
+                    if (!['admin', 'lecturer'].includes(token.type)) return res.status(403).json({ error: 'Forbidden' });
                     const { title, description, content, fileUrl, fileName, uploadedFile, subject, className, uploadedBy } = req.body;
                     if (!title) return res.status(400).json({ error: 'Title required' });
                     let classId = null;
@@ -742,6 +796,7 @@ export default async function handler(req, res) {
                     })));
                 }
                 if (req.method === 'POST') {
+                    if (!['admin', 'lecturer'].includes(token.type)) return res.status(403).json({ error: 'Forbidden' });
                     const { title, message, type, targetClasses, createdBy } = req.body;
                     const client = await db.connect();
                     try {
@@ -786,6 +841,7 @@ export default async function handler(req, res) {
             }
 
             const id = seg1;
+            if (!['admin', 'lecturer'].includes(token.type) || req.method !== 'DELETE') return req.method === 'DELETE' ? res.status(403).json({ error: 'Forbidden' }) : res.status(405).json({ error: 'Method not allowed' });
             if (req.method === 'DELETE') {
                 await db.query('DELETE FROM announcements WHERE id = $1', [id]);
                 return res.json({ success: true });
@@ -805,9 +861,13 @@ export default async function handler(req, res) {
 
             if (!seg1) {
                 if (req.method === 'GET') {
+                    const requestedUserId = req.query.userId;
+                    if (token.type !== 'admin' && requestedUserId && requestedUserId !== token.id) return res.status(403).json({ error: 'Forbidden' });
+                    const userId = token.type === 'admin' ? requestedUserId : token.id;
+                    if (!userId) return res.status(400).json({ error: 'User required' });
                     const { rows } = await db.query(
                         'SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC',
-                        [req.query.userId]
+                        [userId]
                     );
                     return res.json(rows.map(txN));
                 }
@@ -835,6 +895,7 @@ export default async function handler(req, res) {
         if (seg0 === 'settings') {
             const token = verifyToken(req);
             if (!token) return res.status(401).json({ error: 'Unauthorized' });
+            if (token.type !== 'admin') return res.status(403).json({ error: 'Forbidden' });
             if (req.method === 'GET') {
                 const { key } = req.query;
                 if (key) {
@@ -860,6 +921,7 @@ export default async function handler(req, res) {
         if (seg0 === 'written-marks') {
             const token = verifyToken(req);
             if (!token) return res.status(401).json({ error: 'Unauthorized' });
+            if (!['admin', 'lecturer'].includes(token.type)) return res.status(403).json({ error: 'Forbidden' });
             if (req.method === 'GET') {
                 const { rows } = await db.query('SELECT * FROM written_marks');
                 const marks = {};
@@ -888,6 +950,7 @@ export default async function handler(req, res) {
         if (seg0 === 'registration-keys') {
             const token = verifyToken(req);
             if (!token) return res.status(401).json({ error: 'Unauthorized' });
+            if (token.type !== 'admin') return res.status(403).json({ error: 'Forbidden' });
             if (req.method === 'GET') {
                 const { rows } = await db.query('SELECT * FROM registration_keys ORDER BY created_at DESC');
                 return res.json(rows.map(k => ({ key: k.key, createdAt: k.created_at })));
@@ -913,6 +976,7 @@ export default async function handler(req, res) {
         if (seg0 === 'audit-logs') {
             const token = verifyToken(req);
             if (!token) return res.status(401).json({ error: 'Unauthorized' });
+            if (token.type !== 'admin') return res.status(403).json({ error: 'Forbidden' });
             if (req.method === 'GET') {
                 const page = parseInt(req.query.page) || 1;
                 const limit = parseInt(req.query.limit) || 50;
@@ -955,6 +1019,16 @@ export default async function handler(req, res) {
             if (!token) return res.status(401).json({ error: 'Unauthorized' });
             if (req.method === 'GET') {
                 const { assignmentId } = req.query;
+                if (token.type === 'student') {
+                    const { rows } = await db.query(
+                        assignmentId
+                            ? 'SELECT * FROM submissions WHERE assignment_id = $1 AND student_id = $2 ORDER BY submitted_at DESC'
+                            : 'SELECT * FROM submissions WHERE student_id = $1 ORDER BY submitted_at DESC',
+                        assignmentId ? [assignmentId, token.id] : [token.id]
+                    );
+                    return res.json(rows);
+                }
+                if (!['admin', 'lecturer'].includes(token.type)) return res.status(403).json({ error: 'Forbidden' });
                 const { rows } = await db.query(
                     assignmentId
                         ? 'SELECT * FROM submissions WHERE assignment_id = $1 ORDER BY submitted_at DESC'
@@ -964,14 +1038,17 @@ export default async function handler(req, res) {
                 return res.json(rows);
             }
             if (req.method === 'POST') {
-                const { assignmentId, studentId, content, fileUrl } = req.body;
+                if (token.type !== 'student') return res.status(403).json({ error: 'Forbidden' });
+                const { assignmentId, content, fileUrl } = req.body;
+                if (!assignmentId) return res.status(400).json({ error: 'Assignment required' });
                 const { rows } = await db.query(
                     'INSERT INTO submissions (assignment_id, student_id, content, file_url) VALUES ($1,$2,$3,$4) RETURNING *',
-                    [assignmentId, studentId, content, fileUrl]
+                    [assignmentId, token.id, content, fileUrl]
                 );
                 return res.status(201).json(rows[0]);
             }
             if (req.method === 'PUT') {
+                if (!['admin', 'lecturer'].includes(token.type)) return res.status(403).json({ error: 'Forbidden' });
                 const { id, grade, feedback } = req.body;
                 const { rows } = await db.query(
                     'UPDATE submissions SET grade = $1, feedback = $2 WHERE id = $3 RETURNING *',
