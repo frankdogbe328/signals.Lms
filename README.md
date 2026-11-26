@@ -179,4 +179,4 @@ Cross-origin API access is disabled unless an exact origin is listed in `CORS_AL
 
 ### Security-related checks
 
-Run `npm test` for deterministic security unit tests. API smoke/integration tests require a running test server and are run explicitly with `RUN_API_TESTS=1`, `BASE_URL`, and role-specific test tokens/credentials. Do not point mutation tests at production.
+Run `npm test` for deterministic security unit tests. Final API regression tests are separately gated behind `RUN_FINAL_SECURITY_API_TESTS=1` and require a local test server, a dedicated `TEST_DATABASE_URL` equal to `DATABASE_URL`, test-role bearer tokens, and the documented `TEST_*` fixtures. They create test results, registration keys, and lecturer accounts, so run them only against a disposable test database. They reject non-local API URLs and mismatched database URLs. Never configure production credentials or data for these tests.

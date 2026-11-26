@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canManageExam, getEligibleExam, getRegistrationAssignments, gradeObjectiveQuestions, isExamOpen } from '../api/_security.js';
+import {
+    canAssignWrittenMark, canManageExam, canTargetAnnouncementClasses,
+    getEligibleExam, getRegistrationAssignments, getResultAccess,
+    getVisibleAnnouncements, getVisibleMaterials, gradeObjectiveQuestions,
+    gradeSubmission, isExamOpen, registerWithKey, toStudentSubmissionResponse
+} from '../api/_security.js';
 import { cors } from '../api/_cors.js';
 
 test('backend grading ignores forged client score fields and grades stored answers', () => {
@@ -40,6 +45,33 @@ test('only administrator or owning lecturer can manage an exam', async () => {
     assert.equal(await canManageExam(db, { type: 'student', id: 'student-id' }, 'exam-id'), false);
 });
 
+test('individual result access resolves its exam and enforces lecturer ownership', async () => {
+    const calls = [];
+    const result = { id: 'result-a', exam_id: 'exam-a', score: '95' };
+    const db = {
+        query: async (sql, params) => {
+            calls.push({ sql, params });
+            if (sql.includes('FROM results')) return { rows: [result] };
+            return { rows: params[1] === 'lecturer-owner' ? [{}] : [] };
+        }
+    };
+    assert.deepEqual(await getResultAccess(db, { id: 'lecturer-owner', type: 'lecturer' }, 'result-a'), {
+        result,
+        authorized: true
+    });
+    assert.deepEqual(calls.map(call => call.params), [['result-a'], ['exam-a', 'lecturer-owner']]);
+    assert.deepEqual(await getResultAccess(db, { id: 'lecturer-other', type: 'lecturer' }, 'result-a'), {
+        result,
+        authorized: false
+    });
+
+    db.query = async () => ({ rows: [] });
+    assert.deepEqual(await getResultAccess(db, { id: 'lecturer-owner', type: 'lecturer' }, 'missing-result'), {
+        result: null,
+        authorized: false
+    });
+});
+
 test('public lecturer registration uses key scopes instead of requested assignments', () => {
     assert.deepEqual(
         getRegistrationAssignments(
@@ -56,6 +88,139 @@ test('public lecturer registration uses key scopes instead of requested assignme
         getRegistrationAssignments('lecturer', true, null, ['Class B'], ['Science'], null),
         { classes: ['Class B'], subjects: ['Science'], className: 'Class B' }
     );
+});
+
+test('student submission receipt excludes scores, submitted answers, and answer keys', () => {
+    const receipt = toStudentSubmissionResponse({
+        id: 'result-id',
+        exam_id: 'exam-id',
+        exam_title: 'Midterm',
+        submitted_at: '2026-01-01T10:00:00Z',
+        score: 100,
+        answers: ['forged'],
+        question_details: [{ correctAnswer: 'secret', isCorrect: true }],
+        is_released: false
+    });
+    assert.deepEqual(receipt, {
+        id: 'result-id',
+        examId: 'exam-id',
+        examTitle: 'Midterm',
+        submittedAt: '2026-01-01T10:00:00Z',
+        isReleased: false
+    });
+});
+
+test('written marks require a student in the class and lecturer class/subject assignment', async () => {
+    const db = {
+        query: async (_sql, [lecturerId, className, subject, studentId, isAdmin]) => ({
+            rows: [{
+                student_in_class: studentId === 'student-a' && className === 'Class A',
+                lecturer_in_scope: isAdmin || (lecturerId === 'lecturer-a' && className === 'Class A' && subject === 'Math')
+            }]
+        })
+    };
+    const lecturer = { id: 'lecturer-a', type: 'lecturer' };
+    assert.equal(await canAssignWrittenMark(db, lecturer, 'Class A', 'Math', 'student-a'), true);
+    assert.equal(await canAssignWrittenMark(db, lecturer, 'Class B', 'Math', 'student-a'), false);
+    assert.equal(await canAssignWrittenMark(db, lecturer, 'Class A', 'Science', 'student-a'), false);
+    assert.equal(await canAssignWrittenMark(db, lecturer, 'Class A', 'Math', 'student-b'), false);
+    assert.equal(await canAssignWrittenMark(db, { id: 'admin-a', type: 'admin' }, 'Class A', 'Math', 'student-a'), true);
+});
+
+test('lecturer announcement targets are limited to assigned existing classes', async () => {
+    const db = {
+        query: async (sql, params) => sql.includes('SELECT name FROM classes')
+            ? { rows: params[0].filter(name => ['Class A', 'Class B'].includes(name)).map(name => ({ name })) }
+            : { rows: [{ classes: ['Class A'] }] }
+    };
+    const lecturer = { id: 'lecturer-a', type: 'lecturer' };
+    assert.equal(await canTargetAnnouncementClasses(db, lecturer, ['Class A']), true);
+    assert.equal(await canTargetAnnouncementClasses(db, lecturer, ['Class B']), false);
+    assert.equal(await canTargetAnnouncementClasses(db, lecturer, []), false);
+    assert.equal(await canTargetAnnouncementClasses(db, lecturer, ['Unknown']), false);
+    assert.equal(await canTargetAnnouncementClasses(db, { id: 'admin-a', type: 'admin' }, []), true);
+});
+
+test('students see only global or matching-class announcements', async () => {
+    const calls = [];
+    const db = {
+        query: async (sql, params) => {
+            calls.push({ sql, params });
+            return { rows: [{ id: 'global' }, { id: 'class-match' }] };
+        }
+    };
+    const rows = await getVisibleAnnouncements(db, { id: 'student-a', type: 'student' });
+    assert.deepEqual(rows.map(row => row.id), ['global', 'class-match']);
+    assert.deepEqual(calls[0].params, ['student-a']);
+    assert.match(calls[0].sql, /NOT EXISTS\s*\(\s*SELECT 1 FROM announcement_classes target/);
+    assert.match(calls[0].sql, /target\.class_id = student\.class_id/);
+});
+
+test('students and lecturers only receive materials within their visibility scope', async () => {
+    const calls = [];
+    const db = {
+        query: async (sql, params) => {
+            calls.push({ sql, params });
+            return { rows: [] };
+        }
+    };
+    await getVisibleMaterials(db, { id: 'student-a', type: 'student' });
+    assert.deepEqual(calls[0].params, ['student-a']);
+    assert.match(calls[0].sql, /m\.class_id IS NULL OR m\.class_id = \(/);
+    assert.match(calls[0].sql, /WHERE id = \$1 AND type = 'student'/);
+
+    await getVisibleMaterials(db, { id: 'lecturer-a', type: 'lecturer' });
+    assert.deepEqual(calls[1].params, ['lecturer-a']);
+    assert.match(calls[1].sql, /WHERE m\.uploaded_by = \$1/);
+
+    await getVisibleMaterials(db, { id: 'admin-a', type: 'admin' });
+    assert.deepEqual(calls[2].params, []);
+    assert.doesNotMatch(calls[2].sql, /WHERE/);
+});
+
+test('submission grading keeps lecturer updates within assigned student classes', async () => {
+    const statements = [];
+    const db = {
+        query: async (sql, params) => {
+            statements.push({ sql, params });
+            return { rows: params[3] === 'lecturer-a' ? [{ id: params[2] }] : [] };
+        }
+    };
+    assert.equal((await gradeSubmission(db, { id: 'lecturer-a', type: 'lecturer' }, 'submission-a', 90, 'ok')).rows.length, 1);
+    assert.equal((await gradeSubmission(db, { id: 'lecturer-b', type: 'lecturer' }, 'submission-a', 90, 'forbidden')).rows.length, 0);
+    assert.match(statements[0].sql, /student\.type = 'student'/);
+    assert.match(statements[0].sql, /ANY\(\(SELECT classes FROM users WHERE id = \$4 AND type = 'lecturer'\)\)/);
+    assert.equal(statements[0].params[2], 'submission-a');
+    assert.deepEqual(await gradeSubmission(db, { id: 'student-a', type: 'student' }, 'submission-a', 90, 'forbidden'), { rows: [] });
+});
+
+test('registration key use commits only after account creation succeeds', async () => {
+    const commands = [];
+    const client = {
+        query: async sql => {
+            commands.push(sql.trim().split(/\s+/)[0]);
+            if (sql.includes('UPDATE registration_keys')) return { rows: [{ classes: ['Class A'], subjects: ['Math'] }] };
+            return { rows: [] };
+        }
+    };
+    const account = await registerWithKey(client, 'one-time-key', async scopes => scopes);
+    assert.deepEqual(account, { classes: ['Class A'], subjects: ['Math'] });
+    assert.deepEqual(commands, ['BEGIN', 'UPDATE', 'COMMIT']);
+
+    commands.length = 0;
+    await assert.rejects(
+        registerWithKey(client, 'one-time-key', async () => { throw new Error('account insert failed'); }),
+        /account insert failed/
+    );
+    assert.deepEqual(commands, ['BEGIN', 'UPDATE', 'ROLLBACK']);
+
+    commands.length = 0;
+    client.query = async sql => {
+        commands.push(sql.trim().split(/\s+/)[0]);
+        return { rows: [] };
+    };
+    assert.equal(await registerWithKey(client, 'already-used-key', async () => assert.fail('must not create account')), null);
+    assert.deepEqual(commands, ['BEGIN', 'UPDATE', 'ROLLBACK']);
 });
 
 test('student exam eligibility requires active exam and assigned class or general access', async () => {

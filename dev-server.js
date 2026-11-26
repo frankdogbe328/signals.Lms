@@ -10,7 +10,12 @@ import pg from 'pg';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { canManageExam, getEligibleExam, getRegistrationAssignments, gradeObjectiveQuestions, isExamOpen } from './api/_security.js';
+import {
+    canAssignWrittenMark, canManageExam, canTargetAnnouncementClasses,
+    getEligibleExam, getRegistrationAssignments, getResultAccess, getVisibleAnnouncements,
+    getVisibleMaterials, gradeObjectiveQuestions, gradeSubmission, isExamOpen,
+    registerWithKey, toResultResponse, toStudentSubmissionResponse
+} from './api/_security.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const { Pool } = pg;
@@ -230,30 +235,59 @@ async function handleApi(req, res, pathname) {
         const isAdminCaller = token?.type === 'admin';
         if (type === 'admin' && !isAdminCaller) { json(res, { error: 'Administrator accounts require authorization' }, 403); return; }
         if (!isAdminCaller && canPrintResults !== undefined) { json(res, { error: 'Privileged fields cannot be set during public registration' }, 400); return; }
-        const { rows: ex } = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
-        if (ex.length) { json(res, { error: 'Username already exists' }, 409); return; }
-        let lecturerScopes = null;
-        if (type === 'lecturer' && !isAdminCaller) {
-            if (!registrationKey) { json(res, { error: 'Registration key required for lecturers' }, 400); return; }
-            const { rows: keys } = await pool.query(`
-                UPDATE registration_keys SET used_at = NOW()
-                WHERE key = $1 AND used_at IS NULL AND expires_at > NOW()
-                RETURNING classes, subjects
-            `, [registrationKey]);
-            if (!keys.length) { json(res, { error: 'Invalid registration key' }, 401); return; }
-            lecturerScopes = keys[0];
-        }
-        const assignments = getRegistrationAssignments(type, isAdminCaller, lecturerScopes, classes, subjects, className);
-        const { classes: assignedClasses, subjects: assignedSubjects, className: assignedClassName } = assignments;
-        let classId = null;
-        if (assignedClassName) { const { rows: cl } = await pool.query('SELECT id FROM classes WHERE name = $1', [assignedClassName]); classId = cl[0]?.id || null; }
+        if (type === 'lecturer' && !isAdminCaller && !registrationKey) { json(res, { error: 'Registration key required for lecturers' }, 400); return; }
         const hash = await bcrypt.hash(password, 10);
-        const classesArr = assignedClasses;
-        const { rows } = await pool.query(
-            'INSERT INTO users (username,password_hash,full_name,email,telephone,type,rank,class_id,subjects,classes,can_print_results) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id,username,full_name,email,type',
-            [username, hash, fullName, email, telephone, type, rank, classId, assignedSubjects, classesArr, isAdminCaller && canPrintResults === true]
-        );
-        json(res, { user: rows[0] }, 201); return;
+        const client = await pool.connect();
+        try {
+            const createAccount = async scopes => {
+                const { rows: ex } = await client.query('SELECT id FROM users WHERE username = $1', [username]);
+                if (ex.length) {
+                    const error = new Error('Username already exists');
+                    error.code = 'USER_EXISTS';
+                    throw error;
+                }
+                const lecturerScopes = type === 'lecturer' && !isAdminCaller ? scopes : null;
+                const assignments = getRegistrationAssignments(type, isAdminCaller, lecturerScopes, classes, subjects, className);
+                const { classes: assignedClasses, subjects: assignedSubjects, className: assignedClassName } = assignments;
+                let classId = null;
+                if (assignedClassName) {
+                    const { rows: cl } = await client.query('SELECT id FROM classes WHERE name = $1', [String(assignedClassName).trim()]);
+                    classId = cl[0]?.id || null;
+                }
+                const { rows } = await client.query(
+                    'INSERT INTO users (username,password_hash,full_name,email,telephone,type,rank,class_id,subjects,classes,can_print_results) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id,username,full_name,email,type',
+                    [username, hash, fullName, email, telephone, type, rank, classId, assignedSubjects, assignedClasses, isAdminCaller && canPrintResults === true]
+                );
+                return rows[0];
+            };
+            let user;
+            if (type === 'lecturer' && !isAdminCaller) {
+                user = await registerWithKey(client, registrationKey, createAccount);
+                if (!user) {
+                    json(res, { error: 'Invalid registration key' }, 401);
+                    return;
+                }
+            } else {
+                await client.query('BEGIN');
+                try {
+                    user = await createAccount(null);
+                    await client.query('COMMIT');
+                } catch (error) {
+                    await client.query('ROLLBACK');
+                    throw error;
+                }
+            }
+            json(res, { user }, 201);
+        } catch (error) {
+            if (error.code === 'USER_EXISTS') {
+                json(res, { error: 'Username already exists' }, 409);
+                return;
+            }
+            throw error;
+        } finally {
+            client.release();
+        }
+        return;
     }
 
     // All routes below require auth token
@@ -421,7 +455,7 @@ async function handleApi(req, res, pathname) {
         if (method === 'GET') {
             if (token.type === 'student') {
                 const { rows } = await pool.query('SELECT * FROM results WHERE student_id = $1 AND is_released = true ORDER BY submitted_at DESC', [token.id]);
-                json(res, rows.map(r => ({ id:r.id, examId:r.exam_id, examTitle:r.exam_title, studentId:r.student_id, studentName:r.student_name, subject:r.subject, type:r.type, score:parseFloat(r.score), submittedAt:r.submitted_at, isReleased:r.is_released, answers:r.answers||[], questionDetails:r.question_details||[] }))); return;
+                json(res, rows.map(toResultResponse)); return;
             }
             if (!['admin','lecturer'].includes(token.type)) { json(res, { error:'Forbidden' }, 403); return; }
             const { rows } = await pool.query(
@@ -430,7 +464,7 @@ async function handleApi(req, res, pathname) {
                     : 'SELECT r.* FROM results r JOIN exams e ON e.id = r.exam_id WHERE e.created_by = $1 ORDER BY r.submitted_at DESC',
                 token.type === 'admin' ? [] : [token.id]
             );
-            json(res, rows.map(r => ({ id:r.id, examId:r.exam_id, examTitle:r.exam_title, studentId:r.student_id, studentName:r.student_name, subject:r.subject, type:r.type, score:parseFloat(r.score), submittedAt:r.submitted_at, isReleased:r.is_released, answers:r.answers||[], questionDetails:r.question_details||[] }))); return;
+            json(res, rows.map(toResultResponse)); return;
         }
         if (method === 'POST') {
             if (token.type !== 'student') { json(res, { error:'Only students may submit exam results' }, 403); return; }
@@ -460,7 +494,7 @@ async function handleApi(req, res, pathname) {
                         JSON.stringify(r.answers || []), JSON.stringify(grade.questionDetails)]
                 );
                 await client.query('COMMIT');
-                json(res, rows[0], 201);
+                json(res, toStudentSubmissionResponse(rows[0]), 201);
             } catch (error) {
                 await client.query('ROLLBACK');
                 throw error;
@@ -472,10 +506,11 @@ async function handleApi(req, res, pathname) {
     if (resultMatch) {
         if (!['admin','lecturer'].includes(token.type)) { json(res, { error:'Forbidden' }, 403); return; }
         const id = resultMatch[1];
-        const { rows: resultOwner } = await pool.query('SELECT exam_id FROM results WHERE id = $1', [id]);
-        if (!resultOwner[0]) { json(res, { error: 'Result not found' }, 404); return; }
-        if (!await canManageExam(pool, token, resultOwner[0].exam_id)) { json(res, { error: 'Forbidden' }, 403); return; }
-        if (method === 'PUT') { const fields = [], values = []; let i = 1; if (b.isReleased !== undefined) { fields.push(`is_released = $${i++}`); values.push(b.isReleased); } if (b.score !== undefined) { fields.push(`score = $${i++}`); values.push(b.score); } if (b.isWritten !== undefined) { fields.push(`is_written = $${i++}`); values.push(b.isWritten); } if (!fields.length) { json(res, { id }); return; } values.push(id); const { rows } = await pool.query(`UPDATE results SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`, values); json(res, rows[0]); return; }
+        const { result, authorized } = await getResultAccess(pool, token, id);
+        if (!result) { json(res, { error: 'Result not found' }, 404); return; }
+        if (!authorized) { json(res, { error: 'Forbidden' }, 403); return; }
+        if (method === 'GET') { json(res, toResultResponse(result)); return; }
+        if (method === 'PUT') { const fields = [], values = []; let i = 1; if (b.isReleased !== undefined) { fields.push(`is_released = $${i++}`); values.push(b.isReleased); } if (b.score !== undefined) { fields.push(`score = $${i++}`); values.push(b.score); } if (b.isWritten !== undefined) { fields.push(`is_written = $${i++}`); values.push(b.isWritten); } if (!fields.length) { json(res, { id }); return; } values.push(id); const { rows } = await pool.query(`UPDATE results SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`, values); json(res, toResultResponse(rows[0])); return; }
         if (method === 'DELETE') { await pool.query('DELETE FROM results WHERE id = $1', [id]); json(res, { success: true }); return; }
     }
 
@@ -501,7 +536,12 @@ async function handleApi(req, res, pathname) {
     // Materials
     if (pathname === '/api/materials') {
         if (!['admin', 'lecturer'].includes(token.type) && method !== 'GET') { json(res, { error: 'Forbidden' }, 403); return; }
-        if (method === 'GET') { const { rows } = await pool.query('SELECT m.*, c.name as class_name FROM materials m LEFT JOIN classes c ON m.class_id = c.id ORDER BY m.uploaded_at DESC'); json(res, rows.map(m => ({ id: m.id, title: m.title, description: m.description, content: m.content, fileUrl: m.file_url, fileName: m.file_name, uploadedFile: m.uploaded_file, subject: m.subject, class: m.class_name, lecturerId: m.uploaded_by, uploadedBy: m.uploaded_by, uploadedAt: m.uploaded_at }))); return; }
+        if (method === 'GET') {
+            if (!['admin', 'lecturer', 'student'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; }
+            const rows = await getVisibleMaterials(pool, token);
+            json(res, rows.map(m => ({ id: m.id, title: m.title, description: m.description, content: m.content, fileUrl: m.file_url, fileName: m.file_name, uploadedFile: m.uploaded_file, subject: m.subject, class: m.class_name, lecturerId: m.uploaded_by, uploadedBy: m.uploaded_by, uploadedAt: m.uploaded_at })));
+            return;
+        }
         if (method === 'POST') { let classId = null; if (b.className) { const { rows: cl } = await pool.query('SELECT id FROM classes WHERE name = $1', [b.className]); classId = cl[0]?.id || null; } const { rows } = await pool.query('INSERT INTO materials (title,description,content,file_url,file_name,uploaded_file,subject,class_id,uploaded_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *', [b.title, b.description, b.content, b.fileUrl, b.fileName, b.uploadedFile, b.subject, classId, token.id]); json(res, { ...rows[0], class: b.className }, 201); return; }
     }
     if (pathname === '/api/materials/upload-signature') {
@@ -529,8 +569,39 @@ async function handleApi(req, res, pathname) {
     // Announcements
     if (pathname === '/api/announcements') {
         if (!['admin', 'lecturer'].includes(token.type) && method !== 'GET') { json(res, { error: 'Forbidden' }, 403); return; }
-        if (method === 'GET') { const { rows: ann } = await pool.query('SELECT a.*, u.full_name as author_name FROM announcements a LEFT JOIN users u ON a.created_by = u.id ORDER BY a.created_at DESC'); const { rows: ac } = await pool.query('SELECT ac.announcement_id, c.name FROM announcement_classes ac JOIN classes c ON ac.class_id = c.id'); const classMap = {}; ac.forEach(r => { if (!classMap[r.announcement_id]) classMap[r.announcement_id] = []; classMap[r.announcement_id].push(r.name); }); json(res, ann.map(a => ({ id: a.id, title: a.title, message: a.message, content: a.message, type: a.type || 'general', target: a.type || 'general', createdBy: a.created_by, authorName: a.author_name || 'Admin', createdAt: a.created_at, targetClasses: classMap[a.id] || [], classes: classMap[a.id] || [] }))); return; }
-        if (method === 'POST') { if (!['admin','lecturer'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; } const client = await pool.connect(); try { await client.query('BEGIN'); const { rows } = await client.query('INSERT INTO announcements (title,message,type,created_by) VALUES ($1,$2,$3,$4) RETURNING *', [b.title, b.message || b.content, b.type || 'general', token.id]); if (b.targetClasses?.length) { for (const name of b.targetClasses) { const { rows: cl } = await client.query('SELECT id FROM classes WHERE name = $1', [name]); if (cl[0]) await client.query('INSERT INTO announcement_classes (announcement_id,class_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [rows[0].id, cl[0].id]); } } await client.query('COMMIT'); json(res, { ...rows[0], classes: b.targetClasses || [] }, 201); } catch (err) { await client.query('ROLLBACK'); json(res, { error: 'Unable to create announcement' }, 500); } finally { client.release(); } return; }
+        if (method === 'GET') { const ann = await getVisibleAnnouncements(pool, token); const { rows: ac } = await pool.query('SELECT ac.announcement_id, c.name FROM announcement_classes ac JOIN classes c ON c.id = ac.class_id'); const classMap = {}; ac.forEach(r => { if (!classMap[r.announcement_id]) classMap[r.announcement_id] = []; classMap[r.announcement_id].push(r.name); }); json(res, ann.map(a => ({ id: a.id, title: a.title, message: a.message, content: a.message, type: a.type || 'general', target: a.type || 'general', createdBy: a.created_by, authorName: a.author_name || 'Admin', createdAt: a.created_at, targetClasses: classMap[a.id] || [], classes: classMap[a.id] || [] }))); return; }
+        if (method === 'POST') {
+            if (!['admin', 'lecturer'].includes(token.type)) { json(res, { error: 'Forbidden' }, 403); return; }
+            const requestedClasses = b.targetClasses ?? [];
+            if (!await canTargetAnnouncementClasses(pool, token, requestedClasses)) {
+                json(res, { error: 'Announcement targets must be valid classes within your authorized scope' }, 403);
+                return;
+            }
+            const client = await pool.connect();
+            try {
+                await client.query('BEGIN');
+                const { rows } = await client.query(
+                    'INSERT INTO announcements (title,message,type,created_by) VALUES ($1,$2,$3,$4) RETURNING *',
+                    [b.title, b.message || b.content, b.type || 'general', token.id]
+                );
+                const normalizedClasses = [...new Set(requestedClasses.map(name => name.trim()))];
+                for (const name of normalizedClasses) {
+                    const { rows: cl } = await client.query('SELECT id FROM classes WHERE name = $1', [name]);
+                    await client.query(
+                        'INSERT INTO announcement_classes (announcement_id,class_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+                        [rows[0].id, cl[0].id]
+                    );
+                }
+                await client.query('COMMIT');
+                json(res, { ...rows[0], classes: normalizedClasses }, 201);
+            } catch (err) {
+                await client.query('ROLLBACK');
+                throw err;
+            } finally {
+                client.release();
+            }
+            return;
+        }
     }
     const annMatch = pathname.match(/^\/api\/announcements\/([^/]+)$/);
     if (annMatch && method === 'DELETE') {
@@ -591,7 +662,18 @@ async function handleApi(req, res, pathname) {
             : `SELECT * FROM written_marks WHERE class_name = ANY((SELECT classes FROM users WHERE id = $1))
                AND subject = ANY((SELECT subjects FROM users WHERE id = $1))`,
         token.type === 'admin' ? [] : [token.id]); const marks = {}; rows.forEach(m => { const key = m.subject ? `${m.subject}_${m.class_name}` : `general_${m.class_name}`; if (!marks[key]) marks[key] = {}; if (!marks[key][m.exam_type]) marks[key][m.exam_type] = {}; marks[key][m.exam_type][m.student_id] = parseFloat(m.mark); }); json(res, marks); return; }
-        if (method === 'POST') { if (token.type === 'lecturer') { const { rows: assigned } = await pool.query('SELECT 1 FROM users WHERE id=$1 AND $2=ANY(classes) AND $3=ANY(subjects)', [token.id, b.className, b.subject]); if (!assigned.length) { json(res, { error: 'Mark is outside your assigned classes or subjects' }, 403); return; } } const { rows } = await pool.query('INSERT INTO written_marks (subject,class_name,exam_type,student_id,mark) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (subject,class_name,exam_type,student_id) DO UPDATE SET mark=EXCLUDED.mark RETURNING *', [b.subject, b.className, b.examType, b.studentId, b.mark]); json(res, rows[0]); return; }
+        if (method === 'POST') {
+            if (!await canAssignWrittenMark(pool, token, b.className, b.subject, b.studentId)) {
+                json(res, { error: 'Student or mark is outside the authorized class and subject scope' }, 403);
+                return;
+            }
+            const { rows } = await pool.query(
+                'INSERT INTO written_marks (subject,class_name,exam_type,student_id,mark) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (subject,class_name,exam_type,student_id) DO UPDATE SET mark=EXCLUDED.mark RETURNING *',
+                [b.subject, b.className, b.examType, b.studentId, b.mark]
+            );
+            json(res, rows[0]);
+            return;
+        }
     }
 
     // Registration keys
@@ -625,7 +707,8 @@ async function handleApi(req, res, pathname) {
             } else if (token.type === 'lecturer') {
                 query = `SELECT s.* FROM submissions s JOIN users student ON student.id = s.student_id
                     JOIN classes c ON c.id = student.class_id
-                    WHERE c.name = ANY((SELECT classes FROM users WHERE id = $${q.assignmentId ? 2 : 1}))
+                    WHERE student.type = 'student'
+                    AND c.name = ANY((SELECT classes FROM users WHERE id = $${q.assignmentId ? 2 : 1} AND type = 'lecturer'))
                     ${q.assignmentId ? 'AND s.assignment_id = $1' : ''}
                     ORDER BY s.submitted_at DESC`;
                 values = q.assignmentId ? [q.assignmentId, token.id] : [token.id];
@@ -634,14 +717,7 @@ async function handleApi(req, res, pathname) {
         }
         if (method === 'POST') { if (!b.assignmentId) { json(res, { error: 'Assignment required' }, 400); return; } const { rows } = await pool.query('INSERT INTO submissions (assignment_id,student_id,content,file_url) VALUES ($1,$2,$3,$4) RETURNING *', [b.assignmentId, token.id, b.content, b.fileUrl]); json(res, rows[0], 201); return; }
         if (method === 'PUT') {
-            const { rows } = await pool.query(token.type === 'admin'
-                ? 'UPDATE submissions SET grade=$1,feedback=$2 WHERE id=$3 RETURNING *'
-                : `UPDATE submissions SET grade=$1,feedback=$2 WHERE id=$3 AND EXISTS (
-                    SELECT 1 FROM users student JOIN classes c ON c.id = student.class_id
-                    WHERE student.id = submissions.student_id
-                    AND c.name = ANY((SELECT classes FROM users WHERE id=$4))
-                ) RETURNING *`,
-            token.type === 'admin' ? [b.grade, b.feedback, b.id] : [b.grade, b.feedback, b.id, token.id]);
+            const { rows } = await gradeSubmission(pool, token, b.id, b.grade, b.feedback);
             if (!rows.length) { json(res, { error: 'Submission not found or not authorized' }, 404); return; }
             json(res, rows[0]); return;
         }
